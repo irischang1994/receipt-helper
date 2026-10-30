@@ -1,0 +1,876 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>單據報帳助手</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<style>
+/* Layout: settings rail on the left (calendar + defaults), receipt cards on the right, sticky total bar at the bottom. */
+:root{
+  --paper:#F3F5F7; --surface:#FFFFFF; --ink:#1A2129; --muted:#5D6672; --line:#D8DDE3;
+  --accent:#22594A; --accent-ink:#FFFFFF; --accent-soft:#E2EEE9;
+  --seal:#B23A2E; --warn:#9A6200; --warn-soft:#FBF0DA;
+  --f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-head:"Noto Serif TC","Songti TC","PMingLiU",serif;
+  --f-num:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#12161B; --surface:#1A2027; --ink:#E5E9EE; --muted:#9BA4B0; --line:#2C343E;
+  --accent:#6FBFA5; --accent-ink:#0F1A16; --accent-soft:#1E332C;
+  --seal:#E3796B; --warn:#E0AE4A; --warn-soft:#3A2E16; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#12161B; --surface:#1A2027; --ink:#E5E9EE; --muted:#9BA4B0; --line:#2C343E;
+  --accent:#6FBFA5; --accent-ink:#0F1A16; --accent-soft:#1E332C;
+  --seal:#E3796B; --warn:#E0AE4A; --warn-soft:#3A2E16; color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.6}
+.wrap{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 120px}
+header.top{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+h1{font-family:var(--f-head);font-size:26px;margin:0;letter-spacing:.04em;text-wrap:balance}
+.sub{color:var(--muted);font-size:14px}
+.grid{display:grid;grid-template-columns:300px minmax(0,1fr);gap:20px;align-items:start}
+@media (max-width:820px){.grid{grid-template-columns:minmax(0,1fr)}main{order:-1}}
+aside{display:flex;flex-direction:column;gap:14px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.panel h2{font-size:13px;letter-spacing:.12em;color:var(--muted);margin:0 0 8px;font-weight:700}
+.panel p{margin:0 0 8px;font-size:13.5px;color:var(--muted)}
+.panel ol{margin:0 0 10px;padding-left:20px;font-size:13.5px;color:var(--muted)}
+label.f{display:flex;flex-direction:column;gap:3px;font-size:12.5px;color:var(--muted)}
+input,textarea,select{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:6px 9px;width:100%;min-width:0}
+textarea{resize:vertical;min-height:72px;font-size:14px}
+input:focus,textarea:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.stack{display:flex;flex-direction:column;gap:10px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+button{font:inherit;cursor:pointer;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:6px 12px}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+button:disabled{opacity:.5;cursor:default}
+.calstat{font-size:13px;padding:8px 10px;border-radius:6px;background:var(--accent-soft);color:var(--ink)}
+.calstat.none{background:var(--warn-soft)}
+.drop{border:2px dashed var(--line);border-radius:12px;background:var(--surface);padding:22px 16px;text-align:center;cursor:pointer;transition:border-color .15s}
+.drop.over,.drop:hover{border-color:var(--accent)}
+.drop strong{font-size:17px;display:block}
+.drop span{color:var(--muted);font-size:13.5px}
+.notice{margin:12px 0 0;padding:10px 12px;border-radius:8px;background:var(--warn-soft);font-size:13.5px}
+#cards{display:flex;flex-direction:column;gap:14px;margin-top:16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:16px;padding:14px;position:relative}
+@media (max-width:560px){.card{grid-template-columns:minmax(0,1fr)}}
+.thumb{position:relative;background:var(--paper);border-radius:6px;display:flex;align-items:center;justify-content:center;min-height:200px;overflow:hidden}
+.thumb img{max-height:260px;max-width:100%;object-fit:contain;transition:transform .2s;cursor:zoom-in}
+.lightbox{position:fixed;inset:0;z-index:30;background:rgba(10,14,18,.9);overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:max(56px,calc(env(safe-area-inset-top,0px) + 56px)) max(16px,env(safe-area-inset-right,0px)) 16px max(16px,env(safe-area-inset-left,0px))}
+.lightbox img{max-width:100%;max-height:calc(100vh - 80px);background:#fff;cursor:zoom-in}
+.lightbox.zoom img{max-width:none;max-height:none;cursor:zoom-out}
+.lightbox .lbbar{position:fixed;top:calc(10px + env(safe-area-inset-top,0px));right:calc(12px + env(safe-area-inset-right,0px));left:calc(12px + env(safe-area-inset-left,0px));display:flex;justify-content:space-between;align-items:center;gap:8px;color:#fff;font-size:13px}
+.thumb .rot{position:absolute;right:6px;bottom:6px;padding:2px 9px;font-size:13px}
+.fields{display:grid;grid-template-columns:150px 120px minmax(0,1fr);gap:10px;align-content:start;min-width:0}
+@media (max-width:980px){.fields{grid-template-columns:1fr 1fr}}
+.fields .wide{grid-column:1/-1}
+.cardhead{grid-column:1/-1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.cardhead .vendor{color:var(--muted);font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip{font-size:12px;padding:1px 9px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}
+.chip.busy{color:var(--muted)}
+.chip.ok{color:var(--accent)}
+.chip.warn{color:var(--warn)}
+.chip.err{color:var(--seal)}
+.no{font-family:var(--f-num);font-size:12px;color:var(--muted)}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
+.reason{grid-column:1/-1;font-size:13px;color:var(--muted)}
+details.ev{grid-column:1/-1;font-size:13.5px;border-top:1px solid var(--line);padding-top:8px}
+details.ev summary{cursor:pointer;color:var(--muted)}
+details.ev ul{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:3px}
+details.ev li{display:grid;grid-template-columns:96px minmax(0,1fr);gap:8px}
+details.ev li .t{font-family:var(--f-num);font-size:12.5px;color:var(--muted)}
+details.ev li{cursor:pointer;border-radius:4px;padding:1px 4px}
+details.ev li:hover{background:var(--accent-soft)}
+details.ev li.hit{color:var(--accent);font-weight:500}
+details.ev li.pick{background:var(--accent-soft);color:var(--accent);font-weight:700}
+details.ev li.pick span:last-child::before{content:"✓ "}
+details.ev li.dim{opacity:.6}
+.actions{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap}
+.actions .msg{flex:1;min-width:180px}
+.stamp{position:absolute;top:22px;left:24px;color:var(--seal);border:2px solid var(--seal);border-radius:4px;padding:0 8px;font-family:var(--f-head);font-weight:700;transform:rotate(-6deg);opacity:.85}
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);z-index:5;padding-bottom:env(safe-area-inset-bottom,0px)}
+.bar .in{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:10px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.bar .tot{flex:1;min-width:0}
+.bar .tot b{font-family:var(--f-num);font-size:20px}
+.overlay{position:fixed;inset:0;background:rgba(10,14,18,.55);z-index:20;display:flex;justify-content:center;align-items:flex-start;overflow:auto;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 16px max(16px,env(safe-area-inset-left,0px))}
+.modal{background:var(--surface);border-radius:12px;max-width:900px;width:100%;padding:16px;display:flex;flex-direction:column;gap:12px}
+.modal .mh{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.modal .mh h3{margin:0;flex:1;font-family:var(--f-head);font-size:19px}
+.pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.pages img{width:100%;border:1px solid var(--line);border-radius:4px;background:#fff}
+.msg{font-size:13.5px;color:var(--muted)}
+.msg.err{color:var(--seal)}
+.check{display:flex;align-items:center;gap:8px;font-size:13.5px}
+.check input{width:auto}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>單據報帳助手</h1>
+    <span class="sub">上傳單據照片，對照日曆行程自動填好案件與用途，輸出可編輯的 Word 檔</span>
+  </header>
+
+  <div class="grid">
+    <aside>
+      <section class="panel">
+        <h2>自動辨識（免費）</h2>
+        <p>單據文字在你的瀏覽器裡辨識，不用帳號、不收費，照片也不會上傳到任何伺服器。第一次使用會下載約 10–20 MB 的中文辨識資料，之後會快很多。</p>
+        <p>辨識不到的欄位會標示出來，請對照照片補上。</p>
+      </section>
+      <section class="panel">
+        <h2>Google 日曆行程</h2>
+        <ol>
+          <li>電腦開啟 Google 日曆網頁版，右上角齒輪 →「設定」</li>
+          <li>左側「匯入與匯出」→「匯出」，會下載一個 .zip</li>
+          <li>把 .zip 拖到下面。用手機的話，先把 .zip 用 LINE 傳給自己，再從下面「選擇檔案」選它</li>
+        </ol>
+        <div class="stack">
+          <input type="file" id="calFile" accept=".ics,.zip,text/calendar,application/zip" multiple>
+          <div id="calStat" class="calstat none">尚未載入行程。沒有行程也能用，只是案件要自己填。</div>
+          <button id="calClear" hidden>清除已記住的行程</button>
+        </div>
+      </section>
+
+      <section class="panel stack">
+        <h2>報帳設定</h2>
+        <label class="f">申請人（印在明細表）<input id="sApplicant" placeholder="例：張律師"></label>
+        <div class="row2">
+          <label class="f">辦公室的寫法<input id="sOffice" placeholder="辦公室"></label>
+          <label class="f">住家的寫法<input id="sHome" placeholder="住家"></label>
+        </div>
+        <div class="row2">
+          <label class="f">上班時間<input type="time" id="sWs"></label>
+          <label class="f">下班時間<input type="time" id="sWe"></label>
+        </div>
+        <p class="msg">沒寫地點時：上班前出發的行程從住家出發；「回程」在下班前 30 分鐘以後抵達算回住家，其餘算回辦公室。</p>
+        <details>
+          <summary class="msg">客戶名稱抓錯時才需要設定</summary>
+          <label class="f">客戶名稱會從行程標題自動辨識。若某位客戶常被抓錯，可在這裡寫正確名稱，每行一個
+            <textarea id="sCases" placeholder="常如山&#10;數發部"></textarea></label>
+        </details>
+        <div class="row2">
+          <label class="f">日期格式<select id="sDate"><option value="roc">民國 115/10/30</option><option value="ad">西元 2026/10/30</option></select></label>
+          <label class="f">每頁單據數<select id="sPer"><option value="1">1 張</option><option value="2">2 張</option></select></label>
+        </div>
+        <label class="check"><input type="checkbox" id="sSummary"> Word 第一頁附費用明細表</label>
+      </section>
+    </aside>
+
+    <main style="min-width:0">
+      <div id="drop" class="drop" tabindex="0" role="button" aria-label="上傳單據照片">
+        <strong>拖曳單據照片到這裡，或點一下選擇檔案</strong>
+        <span>可一次選多張。iPhone 照片（HEIC）、JPG、PNG 都可以；拍正、拍清楚會比較準</span>
+        <input type="file" id="imgFile" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif" multiple hidden>
+      </div>
+      <div id="aiNotice" class="notice" hidden></div>
+      <div id="cards"></div>
+    </main>
+  </div>
+</div>
+
+<div class="bar"><div class="in">
+  <div class="tot"><span id="cnt">0 張</span>　合計 <b id="sum" class="num">NT$ 0</b><div id="outMsg" class="msg"></div></div>
+  <button id="sortBtn">依日期排序</button>
+  <button id="docBtn" class="primary">產生 Word 檔</button>
+</div></div>
+
+<div id="lb" class="lightbox" hidden>
+  <div class="lbbar"><span>點圖片可放大到原尺寸，再點一下縮回</span><button type="button" id="lbClose">關閉 ✕</button></div>
+  <img id="lbImg" alt="單據放大檢視">
+</div>
+<datalist id="caseList"></datalist>
+
+<script>
+const $=s=>document.querySelector(s);
+const store={
+  get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
+  set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}},
+  del(k){try{localStorage.removeItem(k)}catch(e){}}
+};
+const FONT='"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif';
+const KINDS='火車費、高鐵費、捷運費、公車費、計程車費、停車費、油資、過路費、郵資、影印費、規費、裁判費、餐費、住宿費、文具費、其他';
+
+/* ---------- settings ---------- */
+let S=Object.assign({applicant:'',office:'辦公室',home:'住家',workStart:'09:00',workEnd:'17:30',cases:'',dateFmt:'roc',perPage:'1',summary:true},store.get('rb.settings',{}));
+const bind=(id,key,prop='value')=>{const el=$(id);el[prop]=S[key];el.addEventListener('input',()=>{S[key]=el[prop];store.set('rb.settings',S);if(key==='cases')fillCaseList();if(key==='dateFmt')renderAllDates()})};
+bind('#sApplicant','applicant');bind('#sHome','home');bind('#sWs','workStart');bind('#sWe','workEnd');bind('#sOffice','office');bind('#sCases','cases');bind('#sDate','dateFmt');bind('#sPer','perPage');bind('#sSummary','summary','checked');
+$('#sDate').addEventListener('change',()=>{S.dateFmt=$('#sDate').value;store.set('rb.settings',S)});
+$('#sPer').addEventListener('change',()=>{S.perPage=$('#sPer').value;store.set('rb.settings',S)});
+$('#sSummary').addEventListener('change',()=>{S.summary=$('#sSummary').checked;store.set('rb.settings',S)});
+const caseNames=()=>S.cases.split('\n').map(s=>s.trim()).filter(Boolean);
+function fillCaseList(){const dl=$('#caseList');if(!dl)return;dl.innerHTML='';const names=[...new Set([...caseNames(),...[...CLIENTS.keys()]])];names.forEach(c=>{const o=document.createElement('option');o.value=c;dl.append(o)})}
+
+/* ---------- dates ---------- */
+const pad=n=>String(n).padStart(2,'0');
+function shift(d,n){const t=new Date(d+'T00:00:00Z');t.setUTCDate(t.getUTCDate()+n);return t.toISOString().slice(0,10)}
+function fmtDate(d,withWd=true){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(d||''))return '';
+  const [y,m,dd]=d.split('-').map(Number);
+  const wd='日一二三四五六'[new Date(Date.UTC(y,m-1,dd)).getUTCDay()];
+  const base=S.dateFmt==='roc'?`${y-1911}/${pad(m)}/${pad(dd)}`:`${y}/${pad(m)}/${pad(dd)}`;
+  return withWd?`${base}（${wd}）`:base;
+}
+const money=n=>'NT$ '+(Number(n)||0).toLocaleString('en-US');
+
+/* ---------- calendar (.ics / Google export .zip) ---------- */
+let CAL=store.get('rb.events',null); // {list:[[date,time,end,title,loc,desc]],at,files}
+let byDate=new Map();
+function indexCal(){
+  byDate=new Map();
+  if(!CAL)return;
+  for(const e of CAL.list){const k=e[0];if(!byDate.has(k))byDate.set(k,[]);byDate.get(k).push(e)}
+  for(const v of byDate.values())v.sort((a,b)=>(a[1]||'').localeCompare(b[1]||''));
+}
+function calStatus(){
+  const el=$('#calStat');
+  if(!CAL||!CAL.list.length){el.className='calstat none';el.textContent='尚未載入行程。沒有行程也能用，只是案件要自己填。';$('#calClear').hidden=true;return}
+  const ds=CAL.list.map(e=>e[0]).sort();
+  el.className='calstat';
+  el.textContent=`已載入 ${CAL.list.length.toLocaleString()} 筆行程（${fmtDate(ds[0],false)} – ${fmtDate(ds[ds.length-1],false)}），自動辨識出 ${CLIENTS.size} 位客戶${CAL.saved===false?'。這個瀏覽器無法記住，下次需重新上傳。':''}`;
+  $('#calClear').hidden=CAL.saved===false;
+}
+function unesc(s){return s.replace(/\\n/gi,' ').replace(/\\([,;\\])/g,'$1').trim()}
+function parseDT(val,params){
+  const m=val.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?/);
+  if(!m)return null;
+  let [,y,mo,d,H,M,,z]=m;
+  if(H===undefined)return {date:`${y}-${mo}-${d}`,time:null,allDay:true};
+  if(z){ // UTC -> Taipei (UTC+8, no DST)
+    const t=new Date(Date.UTC(+y,+mo-1,+d,+H,+M)+8*3600e3);
+    return {date:t.toISOString().slice(0,10),time:t.toISOString().slice(11,16)};
+  }
+  return {date:`${y}-${mo}-${d}`,time:`${H}:${M}`};
+}
+function parseICS(text){
+  text=text.replace(/\r?\n[ \t]/g,'');
+  const out=[];let cur=null,inAlarm=false;
+  for(const line of text.split(/\r?\n/)){
+    if(line==='BEGIN:VEVENT'){cur={};continue}
+    if(line==='END:VEVENT'){if(cur&&cur.start&&cur.status!=='CANCELLED')out.push(cur);cur=null;continue}
+    if(!cur)continue;
+    if(line==='BEGIN:VALARM'){inAlarm=true;continue}
+    if(line==='END:VALARM'){inAlarm=false;continue}
+    if(inAlarm)continue;
+    const i=line.indexOf(':');if(i<0)continue;
+    const [name,...params]=line.slice(0,i).split(';');const val=line.slice(i+1);
+    if(name==='SUMMARY')cur.title=unesc(val);
+    else if(name==='LOCATION')cur.loc=unesc(val);
+    else if(name==='DESCRIPTION')cur.desc=unesc(val).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').slice(0,100);
+    else if(name==='DTSTART')cur.start=parseDT(val,params);
+    else if(name==='DTEND')cur.end=parseDT(val,params);
+    else if(name==='STATUS')cur.status=val.trim();
+  }
+  const list=[];
+  for(const e of out){
+    const t=(e.title||'(無標題)').slice(0,80),l=(e.loc||'').slice(0,60),ds=e.desc||'';
+    if(e.start.allDay){ // spread multi-day all-day events, max 7 days
+      let d=e.start.date;const last=e.end&&e.end.date?shift(e.end.date,-1):d;
+      for(let k=0;k<7&&d<=last;k++,d=shift(d,1))list.push([d,'','',t,l,ds]);
+    }else{
+      const end=e.end&&e.end.date===e.start.date?e.end.time:'';
+      list.push([e.start.date,e.start.time,end||'',t,l,ds]);
+    }
+  }
+  return list;
+}
+async function loadCalFiles(files){
+  const el=$('#calStat');el.className='calstat';el.textContent='讀取中…';
+  const texts=[];
+  try{
+    for(const f of files){
+      if(/\.zip$/i.test(f.name)||f.type.includes('zip')){
+        if(!window.JSZip)throw new Error('zip');
+        const z=await JSZip.loadAsync(f);
+        for(const name of Object.keys(z.files))if(/\.ics$/i.test(name))texts.push(await z.files[name].async('string'));
+      }else texts.push(await f.text());
+    }
+  }catch(e){el.className='calstat none';el.textContent='讀不到這個檔案。請上傳 Google 日曆匯出的 .zip 或 .ics。';return}
+  const seen=new Set(),list=[];
+  for(const t of texts)for(const e of parseICS(t)){const k=e[0]+e[1]+e[3];if(!seen.has(k)){seen.add(k);list.push(e)}}
+  if(!list.length){el.className='calstat none';el.textContent='檔案裡沒有找到行程。請確認是 Google 日曆「匯出」的檔案。';return}
+  CAL={list,at:Date.now(),saved:true};
+  if(!store.set('rb.events',CAL)){
+    const slim={list:list.map(e=>[e[0],e[1],e[2],e[3],e[4],'']),at:CAL.at,saved:true};
+    if(store.set('rb.events',slim))CAL=slim;else CAL.saved=false;
+  }
+  indexCal();buildClients();calStatus();
+  records.forEach(r=>{renderEvents(r)});
+  // receipts already read but without calendar context: re-match now
+  if(AI)records.forEach(r=>{if(r.ai&&r.state==='done'&&!r.matchedWithCal){r.state='queued-match';}});pump();
+}
+$('#calFile').addEventListener('change',e=>{if(e.target.files.length)loadCalFiles([...e.target.files]);e.target.value=''});
+$('#calClear').addEventListener('click',()=>{store.del('rb.events');CAL=null;indexCal();buildClients();calStatus();records.forEach(renderEvents)});
+indexCal();
+
+/* ---------- 免費辨識：瀏覽器本機 OCR + 行程規則比對 ---------- */
+let AI=!!window.Tesseract,aiReady=true;
+function aiNotice(text){const n=$('#aiNotice');n.hidden=!text;n.textContent=text||''}
+if(!AI)aiNotice('文字辨識元件沒有載入（可能沒有連上網路），請手動填寫；日曆行程仍會依日期列出供對照。');
+
+const workers={};let curRec=null,curPass='';
+function getWorker(lang){
+  if(!workers[lang])workers[lang]=Tesseract.createWorker(lang==='chi'?['chi_tra','eng']:'eng',1,{logger:m=>{
+    if(!curRec)return;
+    curRec.phase=m.status==='recognizing text'?'辨識 '+curPass:'下載辨識資料';
+    curRec.pct=Math.round((m.progress||0)*100);
+    const c=curRec.el&&curRec.el.querySelector('.chip');if(c)c.textContent=`${curRec.phase} ${curRec.pct}%`;
+  }}).catch(()=>{delete workers[lang];throw {code:'ocr_load'}});
+  return workers[lang];
+}
+// 兩種影像：純灰階（粗大字體讀得好）、扣除背景（淡色點陣字、木紋桌面讀得好）
+async function ocrBlobs(r){
+  const im=await loadImg(r),q=r.rot%180!==0;
+  const sw=q?im.naturalHeight:im.naturalWidth,sh=q?im.naturalWidth:im.naturalHeight,sc=Math.min(1,2000/Math.max(sw,sh));
+  const W=Math.round(sw*sc),H=Math.round(sh*sc),mk=()=>{const c=document.createElement('canvas');c.width=W;c.height=H;return c};
+  const gc=mk(),gx=gc.getContext('2d');gx.fillStyle='#fff';gx.fillRect(0,0,W,H);drawRotated(gx,im,r.rot,0,0,W,H);
+  const gd=gx.getImageData(0,0,W,H),p=gd.data;
+  for(let i=0;i<p.length;i+=4){const g=Math.round(p[i]*.299+p[i+1]*.587+p[i+2]*.114);p[i]=p[i+1]=p[i+2]=g}
+  gx.putImageData(gd,0,0);
+  // 背景：縮小再放大 = 大範圍模糊
+  const sm=document.createElement('canvas');sm.width=Math.max(1,Math.round(W/24));sm.height=Math.max(1,Math.round(H/24));
+  const sx=sm.getContext('2d');sx.imageSmoothingQuality='high';sx.drawImage(gc,0,0,sm.width,sm.height);
+  const bc=mk(),bx=bc.getContext('2d');bx.imageSmoothingQuality='high';bx.drawImage(sm,0,0,W,H);
+  const bg=bx.getImageData(0,0,W,H),b=bg.data,diff=new Uint8ClampedArray(W*H),hist=new Array(256).fill(0);
+  for(let i=0,j=0;i<p.length;i+=4,j++){const v=Math.max(0,b[i]-p[i]);diff[j]=v;hist[v]++}
+  let hi=255,acc=0;while(hi>8&&(acc+=hist[hi])<W*H*.01)hi--;
+  for(let i=0,j=0;i<b.length;i+=4,j++){const v=255-Math.min(255,diff[j]*255/hi);b[i]=b[i+1]=b[i+2]=v;b[i+3]=255}
+  bx.putImageData(bg,0,0);
+  const toBlob=c=>new Promise(res=>c.toBlob(res,'image/jpeg',.92));
+  return {gray:await toBlob(gc),clean:await toBlob(bc)};
+}
+const fw=s=>s.replace(/[０-９Ａ-Ｚａ-ｚ]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/／/g,'/').replace(/：/g,':').replace(/；/g,';').replace(/，/g,',').replace(/．/g,'.').replace(/－/g,'-');
+// 只合併中文字旁邊的空格；數字與數字之間的空格要保留（例如「2026-10-16 14:37」）
+function cleanOCR(t){return fw(t).replace(/([㐀-鿿])[ \t]+(?=[㐀-鿿\d:;$(（])/g,'$1').replace(/([\d:;)）])[ \t]+(?=[㐀-鿿])/g,'$1')}
+const DATE_RE=/(20\d{2})\s*[\/.\-~年]\s*(\d{1,2})\s*[\/.\-~月]\s*(\d{1,2})|(?<!\d)(1[01]\d)\s*[\/.\-年]\s*(\d{1,2})\s*[\/.\-月]\s*(\d{1,2})(?![\d月])/;
+function pickDate(t){
+  const now=Date.now(),c=[];
+  for(const m of t.matchAll(new RegExp(DATE_RE.source,'g'))){
+    const y=m[1]?+m[1]:+m[4]+1911,mo=+(m[2]||m[5]),d=+(m[3]||m[6]);
+    if(mo<1||mo>12||d<1||d>31)continue;
+    const dt=Date.UTC(y,mo-1,d);
+    if(new Date(dt).getUTCDate()!==d||dt>now+86400e3||dt<now-3*365*86400e3)continue;
+    c.push(`${y}-${pad(mo)}-${pad(d)}`);
+  }
+  const cnt={};c.forEach(v=>cnt[v]=(cnt[v]||0)+1);
+  return Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0]||'';
+}
+const TIME_RE=/(?<!\d)([01]?\d|2[0-3])\s*[:;]\s*([0-5]\d)(?!\d)/g;
+// 只取日期後面的時間（上車／下車），用投票排除誤讀；「00:12:34」這種時:分:秒是等候時間，不算
+function pickTimes(t,kind){
+  const cnt={},isDur=(str,m)=>/^\s*[:;]\s*\d\d/.test(str.slice(m.index+m[0].length));
+  const add=(str)=>{for(const m of str.matchAll(TIME_RE))if(!isDur(str,m)){const v=pad(+m[1])+':'+m[2];cnt[v]=(cnt[v]||0)+1}};
+  for(const l of t.split('\n')){const dm=l.match(DATE_RE);if(dm)add(l.slice(dm.index+dm[0].length))}
+  if(!Object.keys(cnt).length)for(const l of t.split('\n'))if(!/wait|停等|等候|h\s*[:;]\s*m|him/i.test(l))add(l);
+  if(/高鐵|火車/.test(kind||'')){
+    // 只取兩位數小時（16:39），手機截圖狀態列的「7:48」不算
+    const seq=[];
+    for(const l of t.split('\n'))if(!DATE_RE.test(l)&&!/開票|購票|交易|付款|取票/.test(l))for(const m of l.matchAll(TIME_RE))if(m[1].length===2&&!isDur(l,m)){const v=m[1]+':'+m[2];if(!seq.includes(v))seq.push(v)}
+    if(seq.length){const two=seq.slice(0,2).sort();return {start:two[0],end:two[two.length-1]}}
+  }
+  const ts=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a]);
+  let top=ts.slice(0,2).sort();
+  if(top.length===2&&toMin(top[1])-toMin(top[0])>300)top=[ts[0]];
+  return {start:top[0]||null,end:top[top.length-1]||null};
+}
+function pickAmount(t){
+  const strong=[],weak=[];
+  // 數字之間允許空格（「8 4 5」），去掉空格與逗號後再判斷
+  const NUM='([1-9](?:[\\d,]|\\s(?=\\d)){0,6})(?!\\d)';
+  const grab=(re,arr)=>{for(const m of t.matchAll(re)){const v=m[1].replace(/[\s,]/g,'');if(+v>0&&+v<200000)arr.push(v)}};
+  grab(new RegExp('(?:總計|合計|總金額|總額|實收|應收|應付|付款金額|車資|Total|TOTAL|Amount)[^\\d]{0,15}?'+NUM,'g'),strong);
+  grab(new RegExp('(?:Fare(?!\\s*[Vv]er)|票價|金額|跳表|NT\\$?|TWD|\\$(?!\\s*/))[^\\d]{0,8}?'+NUM,'g'),weak);
+  grab(new RegExp(NUM.replace('(?!\\d)','')+'\\s*元','g'),weak);
+  // 投票：強關鍵字 2 票、其他 1 票，小於 10 元常是誤讀，票數減半
+  const vote={};
+  strong.forEach(v=>vote[v]=(vote[v]||0)+(+v<10?1:2));
+  weak.forEach(v=>vote[v]=(vote[v]||0)+(+v<10?.5:1));
+  // 「$):845」常被讀成「$2845」：較長的數字如果是另一個候選數字前面多一碼，票數併給較短的那個
+  for(const k of Object.keys(vote))for(const j of Object.keys(vote))if(k!==j&&k.length===j.length+1&&k.endsWith(j)){vote[j]+=vote[k];vote[k]=0}
+  return +Object.keys(vote).sort((x,y)=>vote[y]-vote[x]||y-x)[0]||'';
+}
+const KIND_RULES=[[/計程車|乘車證明|Plate\b|Meter|TAXI|大車隊|跳表|Uber|小黃/i,'計程車費'],[/臺鐵|台鐵|鐵路局|區間|自強|莒光|普悠瑪|太魯閣/,'火車費'],[/高鐵|THSR|高速鐵路|車廂|對號座|自由座|訂位代號|票號/i,'高鐵費'],[/捷運|MRT|悠遊卡/i,'捷運費'],[/客運|公車|巴士/,'公車費'],
+  [/計程車|TAXI|大車隊|跳表|車行|Uber|小黃/i,'計程車費'],[/停車/,'停車費'],[/加油|中油|台塑石油|無鉛|柴油/,'油資'],[/ETC|通行費/,'過路費'],[/郵局|郵資|掛號|中華郵政/,'郵資'],
+  [/影印|列印|複印/,'影印費'],[/裁判費/,'裁判費'],[/規費|法院|地檢|謄本|閱卷/,'規費'],[/飯店|旅館|住宿|酒店|Hotel/i,'住宿費'],[/餐|飯|麵|咖啡|便當|食|飲|Cafe|Coffee/i,'餐費'],[/文具|書局/,'文具費']];
+const HSR_ST=['南港','台北','臺北','板橋','桃園','新竹','苗栗','台中','臺中','彰化','雲林','嘉義','台南','臺南','左營'];
+const TRA_ST=['基隆','七堵','汐止','南港','松山','臺北','台北','萬華','板橋','浮洲','樹林','南樹林','山佳','鶯歌','桃園','內壢','中壢','埔心','楊梅','富岡','湖口','新豐','竹北','北新竹','新竹','竹東','竹南','造橋','苗栗','後龍','通霄','苑裡','大甲','清水','沙鹿','追分','豐原','潭子','太原','臺中','台中','新烏日','烏日','成功','彰化','員林','田中','二水','斗南','斗六','嘉義','民雄','新營','隆田','善化','永康','臺南','台南','保安','岡山','新左營','左營','高雄','鳳山','九曲堂','屏東','潮州','枋寮','瑞芳','福隆','頭城','礁溪','宜蘭','羅東','蘇澳新','蘇澳','南澳','和平','新城','花蓮','吉安','壽豐','光復','瑞穗','玉里','池上','關山','臺東','台東','知本'];
+// 依車票上出現的順序取前兩個不同的站名，例如「新竹 16:39 → 南港 17:25」→「新竹站→南港站」
+function stationRoute(t,kind){
+  if(!/高鐵|火車/.test(kind))return null;
+  const list=(/高鐵/.test(kind)?HSR_ST:TRA_ST).slice().sort((a,b)=>b.length-a.length);
+  const re=new RegExp('('+list.join('|')+')(?!站務|市|縣|區|路|街)','g'),seen=[];
+  for(const m of t.matchAll(re)){const n=m[1].replace(/^台/,'臺');if(!seen.includes(n))seen.push(n);if(seen.length===2)break}
+  if(seen.length<2)return null;
+  const show=n=>(/台/.test(t)&&!/臺/.test(t)?n.replace(/^臺/,'台'):n)+'站';
+  return `${show(seen[0])}→${show(seen[1])}`;
+}
+const ERR={ocr_load:'文字辨識元件下載失敗，請確認網路後按「重新判斷」，或手動填寫。'};
+function setIfFree(r,k,v){if(v===null||v===undefined||v==='')return;if(r.touched.has(k))return;r.f[k]=String(v)}
+
+async function readReceipt(r){
+  r.state='reading';r.pct=0;r.phase='準備辨識';updateCard(r);
+  const img=await ocrBlobs(r),passes=[[img.gray,'eng'],[img.clean,'eng'],[img.clean,'chi']];
+  let txt='';curRec=r;
+  try{for(let i=0;i<passes.length;i++){curPass=`${i+1}/${passes.length}`;const w=await getWorker(passes[i][1]);const {data}=await w.recognize(passes[i][0]);txt+='\n'+(data.text||'')}}
+  finally{curRec=null}
+  if(r.ctl.signal.aborted)throw {code:'cancelled'};
+  const t=cleanOCR(txt);
+  const kind=(KIND_RULES.find(([re])=>re.test(t))||[null,'其他'])[1];
+  const route=stationRoute(t,kind);
+  // 只顯示看得懂的單據名稱（例如「計程車乘車證明」），辨識雜訊不顯示
+  const vm=t.match(/[\u4e00-\u9fff]{0,8}?(?:股份有限公司|有限公司|公司|商店|商行|車隊|車行|門市|乘車證明|證明|收據|發票|車票)/);
+  const vendor=vm?vm[0]:(kind!=='其他'?kind:'');
+  const tm=pickTimes(t,kind);
+  r.ai={date:pickDate(t),time:tm.start,timeEnd:tm.end,amount:pickAmount(t),kind,route,vendor,doc_no:(t.match(/[A-Z]{2}-?\d{8}/)||[])[0]||null};
+  const miss=[!r.ai.date&&'日期',!r.ai.amount&&'金額'].filter(Boolean);
+  r.ai.unclear=miss.length?`沒讀到${miss.join('、')}，請看照片補上`:null;
+  if(r.ai.time)r.ai.items=r.ai.timeEnd&&r.ai.timeEnd!==r.ai.time?`${r.ai.time}–${r.ai.timeEnd}`:r.ai.time;
+  setIfFree(r,'date',r.ai.date);setIfFree(r,'amount',r.ai.amount);
+  renderEvents(r);
+}
+
+/* 行程規則：標題格式「類別：客戶_說明」，例如「交通：何逸松_去程計程車」「會議：何逸松_律見」 */
+const toMin=s=>s?+s.slice(0,2)*60+ +s.slice(3,5):null;
+const MODES=[['計程車',/計程車|小黃|Uber|taxi/i],['高鐵',/高鐵/],['火車',/火車|台鐵|臺鐵|區間|自強|莒光/],['捷運',/捷運/],['公車',/公車|客運|巴士/],['開車',/開車|自駕/]];
+const KIND_MODE={計程車費:'計程車',火車費:'火車',高鐵費:'高鐵',捷運費:'捷運',公車費:'公車',停車費:'開車',油資:'開車',過路費:'開車'};
+const KIND_KEYS={影印費:/列印|影印|複印/,郵資:/郵|寄/,規費:/閱卷|規費|起訴|聲請|謄本|法院/,裁判費:/裁判費|起訴|上訴/,餐費:/餐|飯|咖啡/,住宿費:/住宿|飯店|旅館/,文具費:/文具/};
+const STATION={火車:'火車站',高鐵:'高鐵站',捷運:'捷運站'};
+const DESK=/^(研究|書狀|撰狀|行政|討論|聯繫|聯絡|電話|閱讀|閱卷|紀錄|記錄|準備|整理|休息|睡覺|晚餐|午餐|早餐)$/;
+const PLACE_RULES=[[/律見|接見|看守所|羈押|還押|押所/,'看守所'],[/地檢|偵查庭|檢察署/,'地檢署'],[/開庭|出庭|旁聽開庭|庭期|調解|言詞辯論|宣判|準備程序|法院|地院|高院/,'法院'],[/警局|派出所|警察局|筆錄/,'警察局']];
+const stripEmoji=s=>s.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu,'').trim();
+const catOf=s=>(stripEmoji(s).match(/^([^：:_\s]{1,4})[：:]/)||[])[1]||'';
+const modeOf=s=>{const m=MODES.find(([,re])=>re.test(s));return m?m[0]:''};
+const isMove=e=>catOf(e[3])==='交通'||!!modeOf(e[3]);
+function placeOf(e){
+  if(e[4])return e[4].split(/[,，]/)[0].trim();
+  if(DESK.test(catOf(e[3]))||isMove(e))return '';
+  for(const [re,p] of PLACE_RULES)if(re.test(e[3])&&!/回報/.test(e[3]))return p;
+  return '';
+}
+const homeOrOffice=min=>min!==null&&min>=toMin(S.workEnd||'17:30')-30?(S.home||'住家'):S.office;
+function arrivalOf(e){const m=modeOf(e[3]);return STATION[m]||(/回程/.test(e[3])?homeOrOffice(toMin(e[2]||e[1])):'')}
+const MODE_KIND={計程車:'計程車費',火車:'火車費',高鐵:'高鐵費',捷運:'捷運費',公車:'公車費'};
+function caseFromList(text){
+  for(const c of caseNames()){const k=c.replace(/（.*?）|\(.*?\)/g,'').trim();if(k&&text.includes(k))return c}
+  return '';
+}
+function titleParts(title){
+  const s=stripEmoji(title),hadCat=/^[^：:_\s]{1,4}[：:]/.test(s);
+  return {hadCat,parts:s.replace(/^[^：:_\s]{1,4}[：:]\s*/,'').split(/[_＿]/).map(p=>p.replace(/[（(].*$/,'').trim()).filter(Boolean)};
+}
+const MOVE_WORD=/去程|回程|往返|來回|計程車|火車|台鐵|臺鐵|高鐵|捷運|公車|客運|開車/;
+/* 客戶名稱：取「類別：」後第一段（略過去程、計程車等字），再整理成客戶名，例如
+   「聯繫：常如山妨害性自主_證據保全進度」→ 常如山、「書狀：數發部資安法標案_企劃書」→ 數發部 */
+const ORG_RE=/^(.{2,10}?(?:股份有限公司|有限公司|公司|集團|協會|基金會|事務所|銀行|大學|醫院|委員會|部|局|署|處|府|廳))/;
+const CASE_WORD=/妨害|詐欺|竊盜|傷害|殺人|毒品|侵占|背信|偽造|恐嚇|洗錢|貪污|性自主|性騷|家暴|保護令|離婚|監護|扶養|繼承|遺產|給付|賠償|返還|確認|撤銷|強制|違反|過失|公共危險|勞資|租賃|買賣|借款|標案|專案|計畫|案|事件/;
+let CLIENTS=new Map(),SHORT=[];
+function rawSeg(title){
+  const {hadCat,parts}=titleParts(title);
+  if(!hadCat&&parts.length<2)return '';
+  return parts.find(p=>!MOVE_WORD.test(p)&&p.length>=2)||'';
+}
+function normClient(seg){
+  if(!seg)return '';
+  const pre=SHORT.find(n=>seg.length>n.length&&seg.startsWith(n));if(pre)return pre;
+  if(seg.length<=4)return seg;
+  const o=seg.match(ORG_RE);if(o)return o[1];
+  const m=seg.match(CASE_WORD);if(m&&m.index>=2)return seg.slice(0,m.index);
+  return seg.slice(0,15);
+}
+function buildClients(){
+  const segs=new Map();
+  if(CAL)for(const e of CAL.list){const g=rawSeg(e[3]);if(g)segs.set(g,(segs.get(g)||0)+1)}
+  // 單獨出現過 2 次以上的短名稱，用來切開「常如山妨害性自主」這類黏在一起的寫法
+  SHORT=[...segs].filter(([k,v])=>k.length>=2&&k.length<=4&&v>=2).map(([k])=>k).sort((a,b)=>b.length-a.length);
+  CLIENTS=new Map();
+  for(const [g,v] of segs){const c=normClient(g);if(c)CLIENTS.set(c,(CLIENTS.get(c)||0)+v)}
+  CLIENTS=new Map([...CLIENTS].sort((a,b)=>b[1]-a[1]));
+  fillCaseList();
+}
+function clientOf(e){
+  const l=caseFromList(e[3]+' '+(e[5]||''));if(l)return l;
+  const c=normClient(rawSeg(e[3]));if(c)return c;
+  const m=e[3].match(/([一-鿿A-Za-z○〇Ｏ]{2,12}?)(?:案|事件)/);return m?m[1]:'';
+}
+function activityOf(e,client){const {parts}=titleParts(e[3]);return parts.filter(p=>p!==client&&!MOVE_WORD.test(p)).join('、')||parts.join('、')}
+function scoreEvent(e,rs,re,kind){
+  let s=0;const es=toMin(e[1]),ee=e[2]?toMin(e[2]):es+30;
+  if(rs!==null){if(es===null)return -999;const ov=Math.min(re,ee)-Math.max(rs,es);s+=ov>=0?100+ov:100+2*ov}
+  const km=KIND_MODE[kind];
+  if(km){
+    const em=modeOf(e[3]);
+    if(isMove(e))s+=30;else s-=40;
+    if(em===km)s+=80;else if(em&&em!=='開車'&&km!=='開車')s-=60;
+  }else if(KIND_KEYS[kind]&&KIND_KEYS[kind].test(e[3]))s+=60;
+  return s;
+}
+const RAIL=/^(火車|高鐵)$/,FEEDER=/^(計程車|捷運|公車)$/;
+function routeFor(target,evs,client){
+  const timed=evs.filter(e=>e[1]).sort((a,b)=>toMin(a[1])-toMin(b[1]));
+  const ts=toMin(target[1]),te=target[2]?toMin(target[2]):ts,rail=RAIL.test(modeOf(target[3]));
+  const feeder=e=>rail&&FEEDER.test(modeOf(e[3]));
+  let origin='',dest='',from=null,to=null;
+  // 起點：往前找，跳過研究、行政等不涉及移動的行程，遇到地點型行程或交通的抵達點就停；
+  // 搭火車／高鐵時，前面那段接駁計程車也跳過，起點是搭接駁車之前所在的地方（例如開庭→法院）
+  for(const e of timed.filter(e=>e!==target&&toMin(e[1])<ts).reverse()){
+    if(isMove(e)){if(feeder(e))continue;const a=arrivalOf(e);if(a){origin=a;from=e;break}continue}
+    const p=placeOf(e);if(p){origin=p;from=e;break}
+  }
+  if(!origin)origin=ts<toMin(S.workStart||'09:00')?(S.home||'住家'):S.office;
+  // 終點：回程看抵達時間是住家或辦公室；去程往後找地點型行程（搭火車／高鐵時跳過下車後的接駁車）
+  if(/回程/.test(target[3])){
+    const nxt=!rail&&timed.find(e=>e!==target&&isMove(e)&&STATION[modeOf(e[3])]&&toMin(e[1])>=te-10&&toMin(e[1])<=te+40);
+    if(nxt){dest=STATION[modeOf(nxt[3])];to=nxt}else dest=homeOrOffice(te);
+  }else{
+    const cands=[];
+    for(const e of timed.filter(e=>e!==target&&toMin(e[1])>=ts&&toMin(e[1])<=te+240)){
+      if(isMove(e)&&toMin(e[1])>ts){
+        if(feeder(e)&&!/回程/.test(e[3]))continue;
+        if(!cands.length&&STATION[modeOf(e[3])]){dest=STATION[modeOf(e[3])];to=e}
+        break;
+      }
+      const p=placeOf(e);if(p)cands.push([e,p]);
+    }
+    if(!dest&&cands.length){const c=cands.find(([e])=>client&&clientOf(e)===client)||cands[0];[to,dest]=c}
+  }
+  return {origin,dest,from,to};
+}
+const fmtEv=e=>`${e[1]||'全天'}${e[2]?'–'+e[2]:''}「${e[3].slice(0,30)}」`;
+async function matchCase(r){
+  const d=r.f.date;
+  if(!d){r.matchedWithCal=false;return}
+  r.matchedWithCal=byDate.size>0;
+  const a=r.ai||{};let kind=a.kind||(r.f.purpose.match(/^[^（(]+/)||['其他'])[0];
+  const evs=byDate.get(d)||[],rs=toMin(a.time),re=a.timeEnd?toMin(a.timeEnd):rs;
+  const manual=r.pick?evs.find(e=>e[1]+'|'+e[3]===r.pick)||null:null;
+  let target=manual,bs=manual?999:-Infinity;
+  if(!manual){for(const e of evs){const sc=scoreEvent(e,rs,re,kind);if(sc>bs){bs=sc;target=e}}if(bs<(rs!==null?40:60))target=null}
+  if((!kind||kind==='其他')&&target&&MODE_KIND[modeOf(target[3])])kind=MODE_KIND[modeOf(target[3])];
+  const hint=(r.hint||'').trim();
+  let cs=caseFromList(hint)||(target?clientOf(target):''),desc='',why=[];
+  if(target)why.push((manual?'你選的行程 ':'對應行程 ')+fmtEv(target));
+  if(/高鐵|火車/.test(kind)){
+    // 火車、高鐵一定是站到站：起訖站以車票為準，行程只用來判斷客戶
+    desc=a.route||'？站→？站';
+    why.push(a.route?'起訖站依車票':'車票上沒讀到起訖站，請手動填寫');
+  }else if(KIND_MODE[kind]&&!/停車|油資|過路/.test(kind)){
+    if(target){
+      const rt=routeFor(target,evs,cs);
+      desc=`${rt.origin}→${rt.dest||'？'}`;
+      if(!cs&&rt.to)cs=clientOf(rt.to);
+      if(rt.from)why.push('起點依 '+fmtEv(rt.from));
+      if(rt.to)why.push('終點依 '+fmtEv(rt.to));
+    }
+    else if(a.route)desc=a.route;
+  }else if(target)desc=placeOf(target)||activityOf(target,cs);
+  const rest=hint.replace(cs,'').trim();if(rest)desc=rest;
+  const conf=!target?'low':((manual||(rs!==null&&bs>=150))&&cs)?'high':'medium';
+  const used=why.length;
+  r.match={target:target?target[1]+'|'+target[3]:null,case:cs||null,purpose:kind+(desc?`（${desc}）`:''),confidence:conf,
+    matched:evs.filter(e=>why.some(w=>w.includes(e[3].slice(0,30)))).map(e=>e[3]),
+    reason:used?why.join('；'):(byDate.size?(a.time?'這個時段附近沒有相符的行程':'沒讀到單據時間，請補充說明或手動填寫'):'')};
+  setIfFree(r,'case',r.match.case);setIfFree(r,'purpose',r.match.purpose);
+  renderEvents(r);
+}
+let running=0;
+function pump(){
+  while(running<1){
+    const r=records.find(x=>x.state==='queued-match'||(AI&&x.state==='queued'));if(!r)break;
+    running++;
+    const onlyMatch=r.state==='queued-match';
+    r.state='reading';r.ctl=new AbortController();
+    (async()=>{
+      try{if(!onlyMatch)await readReceipt(r);await matchCase(r);r.state='done';r.err=''}
+      catch(e){
+        const code=e&&e.code;
+        if(code==='cancelled')r.state='manual';
+        else{r.state='error';r.err=ERR[code]||(code==='load'?e.message:'辨識失敗，可按「重新判斷」再試一次，或手動填寫。')}
+      }finally{running--;updateCard(r);pump()}
+    })();
+  }
+}
+
+/* ---------- images ---------- */
+function loadImg(r){
+  if(r.img)return Promise.resolve(r.img);
+  return new Promise((res,rej)=>{const im=new Image();im.onload=()=>{r.img=im;res(im)};im.onerror=()=>rej({code:'load',message:'這個圖檔無法開啟。iPhone 的 HEIC 照片請先轉成 JPG 再上傳。'});im.src=r.url});
+}
+function drawRotated(ctx,im,rot,x,y,w,h){ // draw image rotated by rot degrees, fit (contain) into box, top-centered
+  const sw=im.naturalWidth,sh=im.naturalHeight,q=rot%180!==0;
+  const bw=q?sh:sw,bh=q?sw:sh,sc=Math.min(w/bw,h/bh);
+  const dw=bw*sc,dh=bh*sc,cx=x+w/2,cy=y+dh/2;
+  ctx.save();ctx.translate(cx,cy);ctx.rotate(rot*Math.PI/180);
+  ctx.drawImage(im,-sw*sc/2,-sh*sc/2,sw*sc,sh*sc);ctx.restore();
+  return dh;
+}
+async function normBlob(r,max){
+  const im=await loadImg(r),q=r.rot%180!==0;
+  const sw=q?im.naturalHeight:im.naturalWidth,sh=q?im.naturalWidth:im.naturalHeight;
+  const sc=Math.min(1,max/Math.max(sw,sh));
+  const c=document.createElement('canvas');c.width=Math.round(sw*sc);c.height=Math.round(sh*sc);
+  const ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);
+  drawRotated(ctx,im,r.rot,0,0,c.width,c.height);
+  return new Promise(res=>c.toBlob(res,'image/jpeg',.88));
+}
+
+/* ---------- records & cards ---------- */
+let records=[],seq=0;
+const isHeic=f=>/hei[cf]/i.test(f.type)||/\.hei[cf]$/i.test(f.name);
+function addFiles(files){
+  removeExample();
+  for(const f of files){
+    if(!/^image\//.test(f.type)&&!/\.(jpe?g|png|webp|gif|heic|heif)$/i.test(f.name))continue;
+    const heic=isHeic(f);
+    const r={id:++seq,name:f.name,url:heic?'':URL.createObjectURL(f),rot:0,f:{date:'',amount:'',case:'',purpose:''},touched:new Set(),hint:'',state:heic?'converting':(AI?'queued':'manual')};
+    records.push(r);buildCard(r);
+    if(heic)convertHeic(r,f);
+    else loadImg(r).catch(e=>{r.state='error';r.err=e.message;updateCard(r)});
+  }
+  updateTotals();pump();
+}
+async function convertHeic(r,f){
+  try{
+    if(!window.heic2any)throw new Error('heic2any');
+    let out=await heic2any({blob:f,toType:'image/jpeg',quality:.9});
+    if(Array.isArray(out))out=out[0];
+    if(!records.includes(r))return;
+    r.url=URL.createObjectURL(out);r.el.querySelector('img').src=r.url;
+    await loadImg(r);
+    r.state=AI?'queued':'manual';
+  }catch(e){r.state='error';r.err='這張 HEIC 照片無法轉換。可在 iPhone「設定 → 相機 → 格式」改成「最相容」，或先轉成 JPG 再上傳。'}
+  updateCard(r);pump();
+}
+function buildCard(r){
+  const el=document.createElement('article');el.className='card';r.el=el;
+  el.innerHTML=`
+  <div class="thumb"><img alt="單據照片"><button class="rot" type="button" title="旋轉 90 度">↻ 旋轉</button></div>
+  <div class="fields">
+    <div class="cardhead"><span class="no"></span><span class="chip"></span><span class="vendor"></span><button type="button" class="del">移除</button></div>
+    <label class="f">日期<input type="date" id="d${r.id}" data-k="date"></label>
+    <label class="f">金額（NT$）<input inputmode="numeric" id="a${r.id}" data-k="amount" class="num"></label>
+    <label class="f">案件（客戶名稱）<input list="caseList" id="c${r.id}" data-k="case" placeholder="例：王小明"></label>
+    <label class="f wide">用途<input id="p${r.id}" data-k="purpose" placeholder="例：火車費（辦公室→臺北看守所）"></label>
+    <div class="reason"></div>
+    <details class="ev"><summary></summary><ul></ul></details>
+    <div class="actions"><span class="msg">每個欄位都可以直接修改；行程配對錯了，展開當天行程點選正確的那一筆。</span><button type="button" class="rerun">重新自動判斷</button></div>
+  </div>`;
+  if(r.example){const s=document.createElement('span');s.className='stamp';s.textContent='範例';el.append(s)}
+  if(r.url)el.querySelector('img').src=r.url;
+  el.querySelectorAll('input[data-k]').forEach(inp=>inp.addEventListener('input',()=>{
+    // 金額接受全形數字（注音輸入法），輸入中不改寫欄位內容，離開欄位時才整理
+    const k=inp.dataset.k;r.f[k]=k==='amount'?fw(inp.value).replace(/[^\d]/g,''):inp.value;r.touched.add(k);
+    if(k==='date')renderEvents(r);updateTotals();
+  }));
+  const amt=el.querySelector('[data-k="amount"]');amt.addEventListener('change',()=>{amt.value=r.f.amount});
+  const th=el.querySelector('.thumb img');th.tabIndex=0;th.title='點一下放大檢視';
+  th.addEventListener('click',()=>openLightbox(r));
+  th.addEventListener('keydown',ev=>{if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();openLightbox(r)}});
+  el.querySelector('.rot').addEventListener('click',()=>{r.rot=(r.rot+90)%360;el.querySelector('img').style.transform=`rotate(${r.rot}deg)`});
+  el.querySelector('.del').addEventListener('click',()=>{if(r.ctl)r.ctl.abort();records=records.filter(x=>x!==r);el.remove();if(!r.example)URL.revokeObjectURL(r.url);renumber();updateTotals()});
+  el.querySelector('.rerun').addEventListener('click',()=>{
+    if(r.state==='reading'||r.state==='matching')return;
+    if(!r.f.date&&!AI){r.err='請先填日期，才能比對行程。';updateCard(r);return}
+    r.touched.delete('case');r.touched.delete('purpose');r.err='';r.pick=null;
+    if(r.f.date){r.state='queued-match'}else{r.ai=null;r.touched.delete('amount');r.state='queued'}
+    updateCard(r);pump();
+  });
+  $('#cards').append(el);renumber();updateCard(r);
+}
+function renumber(){records.forEach((r,i)=>{r.el.querySelector('.no').textContent='#'+(i+1)})}
+const CHIP={converting:['busy','轉換 HEIC…'],waiting:['busy','準備中'],queued:['busy','排隊中'],'queued-match':['busy','排隊中'],reading:['busy','讀取單據…'],matching:['busy','比對行程…'],manual:['warn','手動填寫'],error:['err','需處理']};
+function updateCard(r){
+  const el=r.el;if(!el)return;
+  for(const k of ['date','amount','case','purpose']){const inp=el.querySelector(`[data-k="${k}"]`);if(document.activeElement!==inp)inp.value=r.f[k]||''}
+  let cls,txt;
+  if(r.state==='done'){
+    const c=r.match&&r.match.confidence;
+    if(!r.f.case){cls='warn';txt='請填案件'}
+    else if(c==='low'){cls='warn';txt='請確認'}
+    else{cls='ok';txt=r.example?'範例':'已填好'}
+  }else[cls,txt]=CHIP[r.state]||['busy',r.state];
+  if(r.state==='reading'&&r.phase)txt=`${r.phase} ${r.pct||0}%`;
+  const chip=el.querySelector('.chip');chip.className='chip '+cls;chip.textContent=txt;
+  const a=r.ai||{};el.querySelector('.vendor').textContent=[a.vendor,a.items,a.doc_no].filter(Boolean).join('・')||r.name;
+  const notes=[];
+  if(r.err)notes.push(r.err);
+  if(r.state==='done'&&r.match&&r.match.reason)notes.push('判斷依據：'+r.match.reason+'。');
+  if(a.unclear)notes.push('辨識提醒：'+a.unclear);
+  if(r.state==='done'&&!byDate.size&&!r.example)notes.push('尚未載入日曆行程，案件請自行填寫，或在左側載入行程後會自動補上。');
+  el.querySelector('.reason').textContent=notes.join('　');
+  el.querySelector('.rerun').disabled=r.state==='reading'||r.state==='matching';
+  renderEvents(r);updateTotals();
+}
+function renderEvents(r){
+  const el=r.el;if(!el)return;
+  const det=el.querySelector('details.ev'),ul=det.querySelector('ul'),d=r.f.date;
+  if(!d||!byDate.size){det.hidden=true;return}
+  det.hidden=false;
+  const evs=byDate.get(d)||[],hits=(r.match&&Array.isArray(r.match.matched))?r.match.matched.map(String):[];
+  det.querySelector('summary').textContent=`${fmtDate(d)} 的行程（${evs.length}）・對應錯了可直接點選正確的行程`;
+  ul.innerHTML='';
+  if(!evs.length){const li=document.createElement('li');li.className='dim';li.innerHTML='<span class="t">—</span><span>這天沒有行程紀錄</span>';ul.append(li)}
+  for(const e of evs){
+    const li=document.createElement('li'),key=e[1]+'|'+e[3];
+    if(r.match&&r.match.target===key)li.className='pick';
+    else if(hits.some(h=>h&&(e[3].includes(h)||h.includes(e[3]))))li.className='hit';
+    li.tabIndex=0;li.setAttribute('role','button');li.title='改用這筆行程判斷案件與用途';
+    li.addEventListener('click',()=>pickEvent(r,key));
+    li.addEventListener('keydown',ev=>{if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();pickEvent(r,key)}});
+    const t=document.createElement('span');t.className='t';t.textContent=e[1]?e[1]+(e[2]?'–'+e[2]:''):'全天';
+    const s=document.createElement('span');s.textContent=e[3]+(e[4]?'　@'+e[4]:'');
+    li.append(t,s);ul.append(li);
+  }
+}
+async function pickEvent(r,key){
+  if(['reading','matching','converting'].includes(r.state))return;
+  r.pick=key;r.touched.delete('case');r.touched.delete('purpose');r.err='';
+  await matchCase(r);r.state='done';updateCard(r);
+}
+function renderAllDates(){records.forEach(renderEvents)}
+function updateTotals(){
+  const real=records;
+  $('#cnt').textContent=real.length+' 張';
+  $('#sum').textContent=money(real.reduce((s,r)=>s+(Number(r.f.amount)||0),0));
+}
+$('#sortBtn').addEventListener('click',()=>{
+  records.sort((a,b)=>(a.f.date||'9999').localeCompare(b.f.date||'9999'));
+  records.forEach(r=>$('#cards').append(r.el));renumber();
+});
+
+/* upload */
+const drop=$('#drop'),imgFile=$('#imgFile');
+drop.addEventListener('click',()=>imgFile.click());
+drop.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();imgFile.click()}});
+imgFile.addEventListener('change',()=>{addFiles([...imgFile.files]);imgFile.value=''});
+['dragenter','dragover'].forEach(t=>document.addEventListener(t,e=>{e.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(t=>document.addEventListener(t,e=>{e.preventDefault();if(t==='drop'||e.target===drop)drop.classList.remove('over')}));
+document.addEventListener('drop',e=>{
+  const fs=[...(e.dataTransfer?e.dataTransfer.files:[])];
+  const cal=fs.filter(f=>/\.(ics|zip)$/i.test(f.name)),img=fs.filter(f=>!/\.(ics|zip)$/i.test(f.name));
+  if(cal.length)loadCalFiles(cal);if(img.length)addFiles(img);
+});
+
+/* ---------- example card (removed on first upload) ---------- */
+function exampleImage(){
+  const c=document.createElement('canvas');c.width=640;c.height=380;const x=c.getContext('2d');
+  x.fillStyle='#FBF7EE';x.fillRect(0,0,640,380);x.strokeStyle='#C9B98F';x.lineWidth=3;x.strokeRect(14,14,612,352);
+  x.fillStyle='#3B3325';x.font=`700 30px ${FONT}`;x.fillText('乘車票　Ticket',40,70);
+  x.font=`500 26px ${FONT}`;x.fillText('2026/10/28　08:16 開',40,125);
+  x.font=`700 46px ${FONT}`;x.fillText('臺北  →  臺中',40,200);
+  x.font=`500 24px ${FONT}`;x.fillText('標準車廂　全票　6 車 12A',40,250);
+  x.font=`700 34px ${FONT}`;x.fillText('NT$ 700',40,315);
+  x.font=`400 18px ${FONT}`;x.fillStyle='#7A6E57';x.fillText('範例圖片，非真實單據',420,340);
+  return c.toDataURL('image/png');
+}
+function addExample(){
+  const r={id:++seq,example:true,name:'範例',url:'',rot:0,f:{date:'2026-10-28',amount:'700',case:'陳大明（範例）',purpose:'高鐵費（臺北→臺中，臺中地院開庭）'},touched:new Set(['date','amount','case','purpose']),hint:'',state:'done',ai:{vendor:'範例車票',items:'標準車廂單程票'},match:{confidence:'high',reason:'當天 10:00 行程「陳大明案 臺中地院言詞辯論」'}};
+  document.fonts.load(`700 46px ${FONT}`,'乘車票臺北中範例').catch(()=>{}).finally(()=>{r.url=exampleImage();records.push(r);buildCard(r)});
+}
+function removeExample(){const ex=records.filter(r=>r.example);ex.forEach(r=>r.el.remove());records=records.filter(r=>!r.example)}
+addExample();
+
+/* ---------- Word ---------- */
+async function docImage(r,maxW,maxH){
+  const im=await loadImg(r),q=r.rot%180!==0;
+  const sw=q?im.naturalHeight:im.naturalWidth,sh=q?im.naturalWidth:im.naturalHeight,sc=Math.min(1,1400/Math.max(sw,sh));
+  const c=document.createElement('canvas');c.width=Math.round(sw*sc);c.height=Math.round(sh*sc);
+  const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);drawRotated(x,im,r.rot,0,0,c.width,c.height);
+  const blob=await new Promise(res=>c.toBlob(res,'image/jpeg',.85));
+  const k=Math.min(maxW/c.width,maxH/c.height);
+  return {data:await blob.arrayBuffer(),width:Math.round(c.width*k),height:Math.round(c.height*k)};
+}
+async function buildDocx(list){
+  const D=window.docx,W=9638; // A4 寬 11906 twip − 左右邊界各 2 cm
+  const font={ascii:'Times New Roman',hAnsi:'Times New Roman',cs:'Times New Roman',eastAsia:'標楷體'};
+  const run=(text,o={})=>new D.TextRun({text:String(text),font,size:o.size||24,bold:!!o.bold});
+  const border={style:D.BorderStyle.SINGLE,size:6,color:'444444'};
+  const borders={top:border,bottom:border,left:border,right:border};
+  const cell=(text,w,o={})=>new D.TableCell({width:{size:w,type:D.WidthType.DXA},columnSpan:o.span,borders,
+    shading:o.fill?{type:D.ShadingType.CLEAR,color:'auto',fill:o.fill}:undefined,
+    margins:{top:60,bottom:60,left:100,right:100},verticalAlign:D.VerticalAlign.CENTER,
+    children:[new D.Paragraph({alignment:o.align,children:[run(text,o)]})]});
+  const table=(rows,widths)=>new D.Table({width:{size:W,type:D.WidthType.DXA},columnWidths:widths,rows});
+  const children=[];
+  if(S.summary){
+    const dates=list.map(r=>r.f.date).filter(Boolean).sort(),total=list.reduce((s,r)=>s+(Number(r.f.amount)||0),0);
+    const cw=[700,1500,1900,4138,1400];
+    children.push(new D.Paragraph({alignment:D.AlignmentType.CENTER,spacing:{after:200},children:[run('費用明細表',{size:36,bold:true})]}));
+    children.push(new D.Paragraph({spacing:{after:200},children:[run(`申請人：${S.applicant||'＿＿＿＿＿＿'}　　期間：${dates.length?fmtDate(dates[0],false)+' – '+fmtDate(dates[dates.length-1],false):'—'}　　單據 ${list.length} 張`,{size:22})]}));
+    const rows=[new D.TableRow({tableHeader:true,children:['編號','日期','案件','用途','金額'].map((h,i)=>cell(h,cw[i],{bold:true,fill:'E7E6E6',align:i===4?D.AlignmentType.RIGHT:undefined,size:22}))})];
+    list.forEach((r,i)=>rows.push(new D.TableRow({children:[String(i+1),fmtDate(r.f.date,false),r.f.case||'',r.f.purpose||'',r.f.amount?money(r.f.amount):''].map((v,j)=>cell(v,cw[j],{align:j===4?D.AlignmentType.RIGHT:undefined,size:22}))})));
+    rows.push(new D.TableRow({children:[cell('合計',cw[0]+cw[1]+cw[2]+cw[3],{span:4,bold:true,size:22}),cell(money(total),cw[4],{bold:true,align:D.AlignmentType.RIGHT,size:22})]}));
+    children.push(table(rows,cw));
+    const by=new Map();list.forEach(r=>{const k=r.f.case||'未填案件';by.set(k,(by.get(k)||0)+(Number(r.f.amount)||0))});
+    if(by.size>1){
+      children.push(new D.Paragraph({spacing:{before:300,after:100},children:[run('依案件小計',{bold:true})]}));
+      children.push(table([...by].map(([k,v])=>new D.TableRow({children:[cell(k,W-1800,{size:22}),cell(money(v),1800,{align:D.AlignmentType.RIGHT,size:22})]})),[W-1800,1800]));
+    }
+    children.push(new D.Paragraph({spacing:{before:700},children:[run('申請人簽名：＿＿＿＿＿＿＿＿　　　行政核對：＿＿＿＿＿＿＿＿')]}));
+  }
+  const per=S.perPage==='2'?2:1,maxW=620,maxH=per===1?620:250;
+  for(let i=0;i<list.length;i++){
+    const r=list[i];
+    children.push(new D.Paragraph({alignment:D.AlignmentType.RIGHT,pageBreakBefore:i%per===0&&(i>0||S.summary),spacing:{before:i%per?400:0,after:60},children:[run(`單據 ${i+1} / ${list.length}`,{size:18})]}));
+    children.push(table([['案件',r.f.case],['用途',r.f.purpose],['日期',fmtDate(r.f.date)],['金額',r.f.amount?money(r.f.amount):'']]
+      .map(([k,v])=>new D.TableRow({children:[cell(k,1400,{bold:true,fill:'F2F2F2'}),cell(v||'',W-1400)]})),[1400,W-1400]));
+    const img=await docImage(r,maxW,maxH);
+    children.push(new D.Paragraph({alignment:D.AlignmentType.CENTER,spacing:{before:160},children:[new D.ImageRun({data:img.data,transformation:{width:img.width,height:img.height}})]}));
+  }
+  const doc=new D.Document({styles:{default:{document:{run:{font,size:24}}}},
+    sections:[{properties:{page:{size:{width:11906,height:16838},margin:{top:1134,bottom:1134,left:1134,right:1134}}},children}]});
+  return D.Packer.toBlob(doc);
+}
+$('#docBtn').addEventListener('click',async()=>{
+  const out=$('#outMsg'),btn=$('#docBtn');
+  const list=records.filter(r=>r.url);
+  if(!list.length){out.textContent='請先上傳單據照片。';return}
+  if(!window.docx){out.textContent='Word 元件沒有載入，請確認網路後重新整理頁面。';return}
+  list.sort((a,b)=>(a.f.date||'9999').localeCompare(b.f.date||'9999'));
+  btn.disabled=true;out.className='msg';out.textContent='產生中…';
+  try{
+    const blob=await buildDocx(list);
+    const ds=list.map(r=>r.f.date).filter(Boolean).sort();
+    const tag=ds.length?(fmtDate(ds[0],false)+'-'+fmtDate(ds[ds.length-1],false)).replace(/\//g,''):'';
+    const name=`receipts${tag?'_'+tag:''}.docx`,url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+    const busy=records.some(r=>['converting','queued','queued-match','reading','matching'].includes(r.state));
+    const missing=list.filter(r=>!r.f.case||!r.f.purpose||!r.f.date||!r.f.amount).length;
+    out.textContent=`已下載 ${name}（${list.length} 張）。`+(missing?`有 ${missing} 張欄位未填完整。`:'')+(busy?'還有單據在辨識中，完成後可再產生一次。':'');
+  }catch(e){out.className='msg err';out.textContent='產生失敗，請再試一次。'}
+  finally{btn.disabled=false}
+});
+buildClients();calStatus();
+/* ---------- 單據放大檢視 ---------- */
+const lb=$('#lb'),lbImg=$('#lbImg');let lbFrom=null;
+async function openLightbox(r){
+  if(!r.url)return;
+  let src=r.url;
+  if(r.rot){
+    const im=await loadImg(r).catch(()=>null);if(!im)return;
+    const q=r.rot%180!==0,w=q?im.naturalHeight:im.naturalWidth,h=q?im.naturalWidth:im.naturalHeight;
+    const c=document.createElement('canvas');c.width=w;c.height=h;
+    const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,w,h);drawRotated(x,im,r.rot,0,0,w,h);
+    src=c.toDataURL('image/jpeg',.92);
+  }
+  lbFrom=document.activeElement;lbImg.src=src;lb.classList.remove('zoom');lb.hidden=false;$('#lbClose').focus();
+}
+function closeLightbox(){lb.hidden=true;lbImg.removeAttribute('src');if(lbFrom&&lbFrom.focus)lbFrom.focus()}
+lbImg.addEventListener('click',()=>lb.classList.toggle('zoom'));
+$('#lbClose').addEventListener('click',closeLightbox);
+lb.addEventListener('click',e=>{if(e.target===lb)closeLightbox()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!lb.hidden)closeLightbox()});
+</script>
+</body>
+</html>
