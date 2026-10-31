@@ -10,6 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <style>
 /* Layout: settings rail on the left (calendar + defaults), receipt cards on the right, sticky total bar at the bottom. */
@@ -39,7 +40,8 @@ header.top{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bott
 h1{font-family:var(--f-head);font-size:26px;margin:0;letter-spacing:.04em;text-wrap:balance}
 .sub{color:var(--muted);font-size:14px}
 .grid{display:grid;grid-template-columns:300px minmax(0,1fr);gap:20px;align-items:start}
-@media (max-width:820px){.grid{grid-template-columns:minmax(0,1fr)}main{order:-1}}
+@media (max-width:820px){.grid{grid-template-columns:minmax(0,1fr)}.grid>aside{display:contents}.grid>aside>#gPanel{order:-2}.grid>main{order:-1}}
+@media (max-width:560px){.bar .in .tot{flex:0 0 100%}.bar .in{gap:8px}.bar button{padding:6px 9px;font-size:13.5px}}
 aside{display:flex;flex-direction:column;gap:14px}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
 .panel h2{font-size:13px;letter-spacing:.12em;color:var(--muted);margin:0 0 8px;font-weight:700}
@@ -125,23 +127,29 @@ details.ev li.dim{opacity:.6}
 
   <div class="grid">
     <aside>
-      <section class="panel">
-        <h2>自動辨識（免費）</h2>
-        <p>單據文字在你的瀏覽器裡辨識，不用帳號、不收費，照片也不會上傳到任何伺服器。第一次使用會下載約 10–20 MB 的中文辨識資料，之後會快很多。</p>
-        <p>辨識不到的欄位會標示出來，請對照照片補上。</p>
-      </section>
-      <section class="panel">
-        <h2>Google 日曆行程</h2>
-        <ol>
+      <section class="panel stack" id="gPanel">
+        <h2>Google 帳號同步</h2>
+        <p class="msg">登入後直接讀取 Google 日曆；單據照片和填好的欄位會存到你 Google 雲端硬碟的「單據報帳助手」資料夾，手機和電腦打開時自動同步。</p>
+        <div class="row2"><button type="button" id="gLogin" class="primary">登入 Google</button><button type="button" id="gSync" hidden>立即同步</button></div>
+        <div id="gStat" class="msg"></div>
+        <div id="gCals" class="stack" hidden></div>
+        <div id="calStat" class="calstat none">尚未載入行程。沒有行程也能用，只是案件要自己填。</div>
+        <label class="check"><input type="checkbox" id="sAutoOcr"> 這台裝置自動辨識新單據</label>
+        <p class="msg">在手機上可以關掉：照片先存到雲端，等電腦打開時再辨識，比較省電。</p>
+        <details>
+          <summary class="msg">沒有登入時：手動匯入日曆檔</summary>
+          <ol>
           <li>電腦開啟 Google 日曆網頁版，右上角齒輪 →「設定」</li>
           <li>左側「匯入與匯出」→「匯出」，會下載一個 .zip</li>
           <li>把 .zip 拖到下面。用手機的話，先把 .zip 用 LINE 傳給自己，再從下面「選擇檔案」選它</li>
         </ol>
-        <div class="stack">
-          <input type="file" id="calFile" accept=".ics,.zip,text/calendar,application/zip" multiple>
-          <div id="calStat" class="calstat none">尚未載入行程。沒有行程也能用，只是案件要自己填。</div>
-          <button id="calClear" hidden>清除已記住的行程</button>
-        </div>
+          <div class="stack"><input type="file" id="calFile" accept=".ics,.zip,text/calendar,application/zip" multiple><button id="calClear" hidden>清除已記住的行程</button></div>
+        </details>
+      </section>
+      <section class="panel">
+        <h2>自動辨識（免費）</h2>
+        <p>單據文字在你的瀏覽器裡辨識，不收費。第一次使用會下載約 10–20 MB 的中文辨識資料，之後會快很多。照片只會存到你登入的 Google 雲端硬碟，不會傳到其他地方。</p>
+        <p>辨識不到的欄位會標示出來，請對照照片補上。</p>
       </section>
 
       <section class="panel stack">
@@ -184,6 +192,8 @@ details.ev li.dim{opacity:.6}
 <div class="bar"><div class="in">
   <div class="tot"><span id="cnt">0 張</span>　合計 <b id="sum" class="num">NT$ 0</b><div id="outMsg" class="msg"></div></div>
   <button id="sortBtn">依日期排序</button>
+  <button id="redoAll" data-label="全部重做">全部重做</button>
+  <button id="archiveBtn" data-label="標記已請款">標記已請款</button>
   <button id="docBtn" class="primary">產生 Word 檔</button>
 </div></div>
 
@@ -204,9 +214,9 @@ const FONT='"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif';
 const KINDS='火車費、高鐵費、捷運費、公車費、計程車費、停車費、油資、過路費、郵資、影印費、規費、裁判費、餐費、住宿費、文具費、其他';
 
 /* ---------- settings ---------- */
-let S=Object.assign({applicant:'',office:'辦公室',home:'住家',workStart:'09:00',workEnd:'17:30',cases:'',dateFmt:'roc',perPage:'1',summary:true},store.get('rb.settings',{}));
+let S=Object.assign({autoOcr:true,calIds:[],applicant:'',office:'辦公室',home:'住家',workStart:'09:00',workEnd:'17:30',cases:'',dateFmt:'roc',perPage:'1',summary:true},store.get('rb.settings',{}));
 const bind=(id,key,prop='value')=>{const el=$(id);el[prop]=S[key];el.addEventListener('input',()=>{S[key]=el[prop];store.set('rb.settings',S);if(key==='cases')fillCaseList();if(key==='dateFmt')renderAllDates()})};
-bind('#sApplicant','applicant');bind('#sHome','home');bind('#sWs','workStart');bind('#sWe','workEnd');bind('#sOffice','office');bind('#sCases','cases');bind('#sDate','dateFmt');bind('#sPer','perPage');bind('#sSummary','summary','checked');
+bind('#sApplicant','applicant');bind('#sAutoOcr','autoOcr','checked');bind('#sHome','home');bind('#sWs','workStart');bind('#sWe','workEnd');bind('#sOffice','office');bind('#sCases','cases');bind('#sDate','dateFmt');bind('#sPer','perPage');bind('#sSummary','summary','checked');
 $('#sDate').addEventListener('change',()=>{S.dateFmt=$('#sDate').value;store.set('rb.settings',S)});
 $('#sPer').addEventListener('change',()=>{S.perPage=$('#sPer').value;store.set('rb.settings',S)});
 $('#sSummary').addEventListener('change',()=>{S.summary=$('#sSummary').checked;store.set('rb.settings',S)});
@@ -239,7 +249,7 @@ function calStatus(){
   if(!CAL||!CAL.list.length){el.className='calstat none';el.textContent='尚未載入行程。沒有行程也能用，只是案件要自己填。';$('#calClear').hidden=true;return}
   const ds=CAL.list.map(e=>e[0]).sort();
   el.className='calstat';
-  el.textContent=`已載入 ${CAL.list.length.toLocaleString()} 筆行程（${fmtDate(ds[0],false)} – ${fmtDate(ds[ds.length-1],false)}），自動辨識出 ${CLIENTS.size} 位客戶${CAL.saved===false?'。這個瀏覽器無法記住，下次需重新上傳。':''}`;
+  el.textContent=`${CAL.source==='google'?'已從 Google 日曆讀取':'已載入'} ${CAL.list.length.toLocaleString()} 筆行程（${fmtDate(ds[0],false)} – ${fmtDate(ds[ds.length-1],false)}），自動辨識出 ${CLIENTS.size} 位客戶${CAL.saved===false?'。這個瀏覽器無法記住，下次需重新上傳。':''}`;
   $('#calClear').hidden=CAL.saved===false;
 }
 function unesc(s){return s.replace(/\\n/gi,' ').replace(/\\([,;\\])/g,'$1').trim()}
@@ -587,7 +597,7 @@ async function matchCase(r){
 let running=0;
 function pump(){
   while(running<1){
-    const r=records.find(x=>x.state==='queued-match'||(AI&&x.state==='queued'));if(!r)break;
+    const r=records.find(x=>x.state==='queued-match'||(AI&&x.state==='queued'&&(S.autoOcr!==false||x.force)));if(!r)break;
     running++;
     const onlyMatch=r.state==='queued-match';
     r.state='reading';r.ctl=new AbortController();
@@ -597,7 +607,7 @@ function pump(){
         const code=e&&e.code;
         if(code==='cancelled')r.state='manual';
         else{r.state='error';r.err=ERR[code]||(code==='load'?e.message:'辨識失敗，可按「重新判斷」再試一次，或手動填寫。')}
-      }finally{running--;updateCard(r);pump()}
+      }finally{running--;r.force=false;updateCard(r);if(records.includes(r))gSave(r);pump()}
     })();
   }
 }
@@ -636,7 +646,7 @@ function addFiles(files){
     const r={id:++seq,name:f.name,url:heic?'':URL.createObjectURL(f),rot:0,f:{date:'',amount:'',case:'',purpose:''},touched:new Set(),hint:'',state:heic?'converting':(AI?'queued':'manual')};
     records.push(r);buildCard(r);
     if(heic)convertHeic(r,f);
-    else loadImg(r).catch(e=>{r.state='error';r.err=e.message;updateCard(r)});
+    else loadImg(r).then(()=>gUpload(r)).catch(e=>{r.state='error';r.err=e.message;updateCard(r)});
   }
   updateTotals();pump();
 }
@@ -648,7 +658,7 @@ async function convertHeic(r,f){
     if(!records.includes(r))return;
     r.url=URL.createObjectURL(out);r.el.querySelector('img').src=r.url;
     await loadImg(r);
-    r.state=AI?'queued':'manual';
+    r.state=AI?'queued':'manual';gUpload(r);
   }catch(e){r.state='error';r.err='這張 HEIC 照片無法轉換。可在 iPhone「設定 → 相機 → 格式」改成「最相容」，或先轉成 JPG 再上傳。'}
   updateCard(r);pump();
 }
@@ -668,28 +678,29 @@ function buildCard(r){
   </div>`;
   if(r.example){const s=document.createElement('span');s.className='stamp';s.textContent='範例';el.append(s)}
   if(r.url)el.querySelector('img').src=r.url;
+  if(r.rot)el.querySelector('img').style.transform=`rotate(${r.rot}deg)`;
   el.querySelectorAll('input[data-k]').forEach(inp=>inp.addEventListener('input',()=>{
     // 金額接受全形數字（注音輸入法），輸入中不改寫欄位內容，離開欄位時才整理
     const k=inp.dataset.k;r.f[k]=k==='amount'?fw(inp.value).replace(/[^\d]/g,''):inp.value;r.touched.add(k);
-    if(k==='date')renderEvents(r);updateTotals();
+    if(k==='date')renderEvents(r);updateTotals();gSave(r);
   }));
   const amt=el.querySelector('[data-k="amount"]');amt.addEventListener('change',()=>{amt.value=r.f.amount});
   const th=el.querySelector('.thumb img');th.tabIndex=0;th.title='點一下放大檢視';
   th.addEventListener('click',()=>openLightbox(r));
   th.addEventListener('keydown',ev=>{if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();openLightbox(r)}});
-  el.querySelector('.rot').addEventListener('click',()=>{r.rot=(r.rot+90)%360;el.querySelector('img').style.transform=`rotate(${r.rot}deg)`});
-  el.querySelector('.del').addEventListener('click',()=>{if(r.ctl)r.ctl.abort();records=records.filter(x=>x!==r);el.remove();if(!r.example)URL.revokeObjectURL(r.url);renumber();updateTotals()});
+  el.querySelector('.rot').addEventListener('click',()=>{r.rot=(r.rot+90)%360;el.querySelector('img').style.transform=`rotate(${r.rot}deg)`;gSave(r)});
+  el.querySelector('.del').addEventListener('click',()=>{if(r.ctl)r.ctl.abort();if(r.driveId)gTrash(r.driveId);records=records.filter(x=>x!==r);el.remove();if(!r.example)URL.revokeObjectURL(r.url);renumber();updateTotals()});
   el.querySelector('.rerun').addEventListener('click',()=>{
     if(r.state==='reading'||r.state==='matching')return;
     if(!r.f.date&&!AI){r.err='請先填日期，才能比對行程。';updateCard(r);return}
-    r.touched.delete('case');r.touched.delete('purpose');r.err='';r.pick=null;
+    r.touched.delete('case');r.touched.delete('purpose');r.err='';r.pick=null;r.force=true;
     if(r.f.date){r.state='queued-match'}else{r.ai=null;r.touched.delete('amount');r.state='queued'}
     updateCard(r);pump();
   });
   $('#cards').append(el);renumber();updateCard(r);
 }
 function renumber(){records.forEach((r,i)=>{r.el.querySelector('.no').textContent='#'+(i+1)})}
-const CHIP={converting:['busy','轉換 HEIC…'],waiting:['busy','準備中'],queued:['busy','排隊中'],'queued-match':['busy','排隊中'],reading:['busy','讀取單據…'],matching:['busy','比對行程…'],manual:['warn','手動填寫'],error:['err','需處理']};
+const CHIP={loading:['busy','下載照片…'],converting:['busy','轉換 HEIC…'],waiting:['busy','準備中'],queued:['busy','排隊中'],'queued-match':['busy','排隊中'],reading:['busy','讀取單據…'],matching:['busy','比對行程…'],manual:['warn','手動填寫'],error:['err','需處理']};
 function updateCard(r){
   const el=r.el;if(!el)return;
   for(const k of ['date','amount','case','purpose']){const inp=el.querySelector(`[data-k="${k}"]`);if(document.activeElement!==inp)inp.value=r.f[k]||''}
@@ -701,6 +712,7 @@ function updateCard(r){
     else{cls='ok';txt=r.example?'範例':'已填好'}
   }else[cls,txt]=CHIP[r.state]||['busy',r.state];
   if(r.state==='reading'&&r.phase)txt=`${r.phase} ${r.pct||0}%`;
+  if(r.state==='queued'&&S.autoOcr===false&&!r.force){cls='warn';txt='等電腦辨識'}
   const chip=el.querySelector('.chip');chip.className='chip '+cls;chip.textContent=txt;
   const a=r.ai||{};el.querySelector('.vendor').textContent=[a.vendor,a.items,a.doc_no].filter(Boolean).join('・')||r.name;
   const notes=[];
@@ -736,7 +748,7 @@ function renderEvents(r){
 async function pickEvent(r,key){
   if(['reading','matching','converting'].includes(r.state))return;
   r.pick=key;r.touched.delete('case');r.touched.delete('purpose');r.err='';
-  await matchCase(r);r.state='done';updateCard(r);
+  await matchCase(r);r.state='done';updateCard(r);gSave(r);
 }
 function renderAllDates(){records.forEach(renderEvents)}
 function updateTotals(){
@@ -791,6 +803,7 @@ async function docImage(r,maxW,maxH){
   const k=Math.min(maxW/c.width,maxH/c.height);
   return {data:await blob.arrayBuffer(),width:Math.round(c.width*k),height:Math.round(c.height*k)};
 }
+const todayISO=()=>{const d=new Date();return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`};
 async function buildDocx(list){
   const D=window.docx,W=9638; // A4 寬 11906 twip − 左右邊界各 2 cm
   const font={ascii:'Times New Roman',hAnsi:'Times New Roman',cs:'Times New Roman',eastAsia:'標楷體'};
@@ -807,7 +820,7 @@ async function buildDocx(list){
     const dates=list.map(r=>r.f.date).filter(Boolean).sort(),total=list.reduce((s,r)=>s+(Number(r.f.amount)||0),0);
     const cw=[700,1500,1900,4138,1400];
     children.push(new D.Paragraph({alignment:D.AlignmentType.CENTER,spacing:{after:200},children:[run('費用明細表',{size:36,bold:true})]}));
-    children.push(new D.Paragraph({spacing:{after:200},children:[run(`申請人：${S.applicant||'＿＿＿＿＿＿'}　　期間：${dates.length?fmtDate(dates[0],false)+' – '+fmtDate(dates[dates.length-1],false):'—'}　　單據 ${list.length} 張`,{size:22})]}));
+    children.push(new D.Paragraph({spacing:{after:200},children:[run(`申請人：${S.applicant||'＿＿＿＿＿＿'}　　請款日期：${fmtDate(todayISO(),false)}　　單據 ${list.length} 張`,{size:22})]}));
     const rows=[new D.TableRow({tableHeader:true,children:['編號','日期','案件','用途','金額'].map((h,i)=>cell(h,cw[i],{bold:true,fill:'E7E6E6',align:i===4?D.AlignmentType.RIGHT:undefined,size:22}))})];
     list.forEach((r,i)=>rows.push(new D.TableRow({children:[String(i+1),fmtDate(r.f.date,false),r.f.case||'',r.f.purpose||'',r.f.amount?money(r.f.amount):''].map((v,j)=>cell(v,cw[j],{align:j===4?D.AlignmentType.RIGHT:undefined,size:22}))})));
     rows.push(new D.TableRow({children:[cell('合計',cw[0]+cw[1]+cw[2]+cw[3],{span:4,bold:true,size:22}),cell(money(total),cw[4],{bold:true,align:D.AlignmentType.RIGHT,size:22})]}));
@@ -847,7 +860,7 @@ $('#docBtn').addEventListener('click',async()=>{
     a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
     const busy=records.some(r=>['converting','queued','queued-match','reading','matching'].includes(r.state));
     const missing=list.filter(r=>!r.f.case||!r.f.purpose||!r.f.date||!r.f.amount).length;
-    out.textContent=`已下載 ${name}（${list.length} 張）。`+(missing?`有 ${missing} 張欄位未填完整。`:'')+(busy?'還有單據在辨識中，完成後可再產生一次。':'');
+    out.textContent=`已下載 ${name}（${list.length} 張）。交給行政後，可按「標記已請款」清空這批。`+(missing?`有 ${missing} 張欄位未填完整。`:'')+(busy?'還有單據在辨識中，完成後可再產生一次。':'');
   }catch(e){out.className='msg err';out.textContent='產生失敗，請再試一次。'}
   finally{btn.disabled=false}
 });
@@ -871,6 +884,214 @@ lbImg.addEventListener('click',()=>lb.classList.toggle('zoom'));
 $('#lbClose').addEventListener('click',closeLightbox);
 lb.addEventListener('click',e=>{if(e.target===lb)closeLightbox()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!lb.hidden)closeLightbox()});
+/* ---------- Google 同步：日曆直接讀取、單據存到自己的雲端硬碟 ---------- */
+const G_CLIENT='858935258695-sj6eba6dh9dhffeqenao0ehfecohh8j2.apps.googleusercontent.com';
+const G_SCOPE='https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.file';
+const G_FOLDER='單據報帳助手',DRV='https://www.googleapis.com/drive/v3/files';
+let gTok=store.get('rb.gtok',null),gClient=null,gFolder=null,gBusy=false,gLast=0;
+const gOk=()=>!!(gTok&&gTok.exp>Date.now()+60e3);
+const safeJSON=t=>{try{return JSON.parse(t||'{}')}catch(e){return {}}};
+function gStatus(t,err){const el=$('#gStat');el.textContent=t;el.className='msg'+(err?' err':'')}
+function gUI(){
+  const ok=gOk(),used=store.get('rb.gused',false),btn=$('#gLogin');
+  btn.textContent=ok?'重新登入':(used?'重新連線 Google':'登入 Google');
+  btn.classList.toggle('primary',!ok);$('#gSync').hidden=!ok;
+}
+function gInit(){
+  if(gClient)return true;
+  if(!(window.google&&google.accounts&&google.accounts.oauth2))return false;
+  gClient=google.accounts.oauth2.initTokenClient({client_id:G_CLIENT,scope:G_SCOPE,
+    callback:async resp=>{
+      if(resp.error){gStatus('登入沒有完成，請再按一次。',true);return}
+      gTok={t:resp.access_token,exp:Date.now()+(+resp.expires_in||3600)*1000};
+      store.set('rb.gtok',gTok);store.set('rb.gused',true);gUI();
+      await gAfterLogin();
+    },
+    error_callback:e=>gStatus(e&&e.type==='popup_closed'?'登入視窗被關閉了，請再按一次。':'登入視窗被瀏覽器擋住了，請允許這個網站開啟彈出視窗後再試。',true)});
+  return true;
+}
+$('#gLogin').addEventListener('click',()=>{
+  if(!gInit()){gStatus('Google 登入元件還在載入，請過幾秒再按。',true);return}
+  gClient.requestAccessToken({prompt:store.get('rb.gused',false)?'':'consent'});
+});
+$('#gSync').addEventListener('click',()=>gSyncAll());
+async function gfetch(url,opt={}){
+  if(!gOk()){gUI();throw new Error('auth')}
+  const res=await fetch(url,{...opt,headers:{...(opt.headers||{}),Authorization:'Bearer '+gTok.t}});
+  if(res.status===401){gTok=null;store.del('rb.gtok');gUI();gStatus('Google 登入已過期，請按「重新連線 Google」。',true);throw new Error('auth')}
+  if(!res.ok)throw new Error('http '+res.status);
+  return res;
+}
+async function gAfterLogin(){await gLoadCalList();await gSyncAll()}
+
+/* 日曆 */
+async function gLoadCalList(){
+  try{
+    const j=await (await gfetch('https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=250&fields=items(id,summary,primary)')).json();
+    const items=j.items||[],box=$('#gCals');
+    if(!S.calIds||!S.calIds.length||!S.calIds.some(id=>items.some(c=>c.id===id))){const p=items.find(c=>c.primary);S.calIds=p?[p.id]:[];store.set('rb.settings',S)}
+    box.innerHTML='<div class="msg">要讀取的日曆：</div>';
+    for(const c of items){
+      const l=document.createElement('label'),i=document.createElement('input');
+      l.className='check';i.type='checkbox';i.dataset.id=c.id;i.checked=S.calIds.includes(c.id);
+      i.addEventListener('change',()=>{S.calIds=[...box.querySelectorAll('input:checked')].map(x=>x.dataset.id);store.set('rb.settings',S);gLoadCalendar().catch(()=>{})});
+      l.append(i,document.createTextNode((c.summary||c.id)+(c.primary?'（主要）':'')));box.append(l);
+    }
+    box.hidden=items.length<2;
+  }catch(e){if(e.message!=='auth')gStatus('讀不到日曆清單，請確認 Google Cloud 已啟用 Google Calendar API。',true)}
+}
+function tpe(iso){const d=new Date(Date.parse(iso)+8*3600e3).toISOString();return {date:d.slice(0,10),time:d.slice(11,16)}}
+function gEvent(ev,out){
+  if(ev.status==='cancelled'||!ev.start)return;
+  const t=(ev.summary||'(無標題)').slice(0,80),l=(ev.location||'').slice(0,60),ds=(ev.description||'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').slice(0,100);
+  if(ev.start.date){let d=ev.start.date;const last=ev.end&&ev.end.date?shift(ev.end.date,-1):d;for(let k=0;k<7&&d<=last;k++,d=shift(d,1))out.push([d,'','',t,l,ds]);return}
+  const st=tpe(ev.start.dateTime),en=ev.end&&ev.end.dateTime?tpe(ev.end.dateTime):null;
+  out.push([st.date,st.time,en&&en.date===st.date?en.time:'',t,l,ds]);
+}
+async function gLoadCalendar(){
+  const ids=S.calIds||[];if(!ids.length)return;
+  const now=Date.now(),min=new Date(now-200*86400e3).toISOString(),max=new Date(now+2*86400e3).toISOString(),list=[];
+  for(const id of ids){
+    let pt='';
+    do{
+      const u=`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(id)}/events?singleEvents=true&orderBy=startTime&maxResults=2500&timeMin=${encodeURIComponent(min)}&timeMax=${encodeURIComponent(max)}&fields=nextPageToken,items(status,summary,location,description,start,end)`+(pt?'&pageToken='+encodeURIComponent(pt):'');
+      const j=await (await gfetch(u)).json();(j.items||[]).forEach(ev=>gEvent(ev,list));pt=j.nextPageToken||'';
+    }while(pt);
+  }
+  applyCalendar(list,'google');
+}
+function applyCalendar(list,source){
+  CAL={list,at:Date.now(),saved:true,source};
+  if(!store.set('rb.events',CAL)){const slim={...CAL,list:list.map(e=>[e[0],e[1],e[2],e[3],e[4],''])};if(store.set('rb.events',slim))CAL=slim;else CAL.saved=false}
+  indexCal();buildClients();calStatus();
+  records.forEach(r=>{renderEvents(r);if(r.state==='done'&&!r.matchedWithCal&&r.f.date)r.state='queued-match'});
+  pump();
+}
+
+/* 雲端硬碟：每張單據是一個 JPG，辨識結果與欄位存在檔案的「說明」欄 */
+async function gGetFolder(){
+  if(gFolder)return gFolder;
+  const q=encodeURIComponent(`name='${G_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const j=await (await gfetch(`${DRV}?q=${q}&spaces=drive&fields=files(id)`)).json();
+  if(j.files&&j.files.length)return gFolder=j.files[0].id;
+  const c=await (await gfetch(DRV+'?fields=id',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:G_FOLDER,mimeType:'application/vnd.google-apps.folder'})})).json();
+  return gFolder=c.id;
+}
+function metaOf(r){
+  const st=['done','manual','error','queued-match'].includes(r.state)?r.state:'queued';
+  return JSON.stringify({v:1,name:r.name,rot:r.rot,f:r.f,touched:[...r.touched],ai:r.ai||null,
+    match:r.match?{target:r.match.target,case:r.match.case,purpose:r.match.purpose,confidence:r.match.confidence,matched:(r.match.matched||[]).slice(0,3),reason:r.match.reason}:null,
+    pick:r.pick||null,state:st,matchedWithCal:!!r.matchedWithCal,archived:r.archived||null});
+}
+function applyMeta(r,m){
+  if(!m||!m.f)return;
+  r.f=Object.assign({date:'',amount:'',case:'',purpose:''},m.f);r.touched=new Set(m.touched||[]);
+  r.ai=m.ai||null;r.match=m.match||null;r.pick=m.pick||null;r.rot=m.rot||0;r.matchedWithCal=!!m.matchedWithCal;
+  r.state=m.state||'queued';if(r.state==='queued-match'&&!r.f.date)r.state='queued';
+  if(r.el)r.el.querySelector('img').style.transform=r.rot?`rotate(${r.rot}deg)`:'';
+}
+async function gUpload(r){
+  if(!gOk()||r.driveId||r.example||r.uploading||!r.url)return;
+  r.uploading=true;
+  try{
+    const folder=await gGetFolder(),im=await loadImg(r),sc=Math.min(1,2000/Math.max(im.naturalWidth,im.naturalHeight));
+    const c=document.createElement('canvas');c.width=Math.round(im.naturalWidth*sc);c.height=Math.round(im.naturalHeight*sc);
+    const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(im,0,0,c.width,c.height);
+    const jpg=await new Promise(res=>c.toBlob(res,'image/jpeg',.88));
+    const meta={name:(r.name||'receipt').replace(/\.(heic|heif|png|webp|gif|jpe?g)$/i,'')+'.jpg',parents:[folder],mimeType:'image/jpeg',description:metaOf(r)};
+    const bd='rb'+Math.random().toString(36).slice(2);
+    const body=new Blob([`--${bd}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${bd}\r\nContent-Type: image/jpeg\r\n\r\n`,jpg,`\r\n--${bd}--`]);
+    const j=await (await gfetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime',{method:'POST',headers:{'Content-Type':'multipart/related; boundary='+bd},body})).json();
+    r.driveId=j.id;r.remoteTime=j.modifiedTime;
+    if(!records.includes(r))gTrash(j.id);else if(r.dirty)gSave(r,0);
+  }catch(e){if(e.message!=='auth')gStatus('有單據沒有存到雲端硬碟，按「立即同步」會再試一次。',true)}
+  finally{r.uploading=false}
+}
+function gSave(r,delay=1200){
+  if(r.example)return;
+  r.dirty=true;clearTimeout(r.saveT);
+  r.saveT=setTimeout(async()=>{
+    if(!gOk())return;
+    if(!r.driveId){gUpload(r);return}
+    r.dirty=false;
+    try{const j=await (await gfetch(`${DRV}/${r.driveId}?fields=id,modifiedTime`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({description:metaOf(r)})})).json();r.remoteTime=j.modifiedTime}
+    catch(e){r.dirty=true}
+  },delay);
+}
+function gTrash(id){if(gOk())gfetch(`${DRV}/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({trashed:true})}).catch(()=>{})}
+async function gPull(){
+  const folder=await gGetFolder(),q=encodeURIComponent(`'${folder}' in parents and trashed=false and mimeType='image/jpeg'`);
+  let pt='',files=[];
+  do{const j=await (await gfetch(`${DRV}?q=${q}&pageSize=1000&orderBy=createdTime&fields=nextPageToken,files(id,name,description,modifiedTime)`+(pt?'&pageToken='+encodeURIComponent(pt):''))).json();files=files.concat(j.files||[]);pt=j.nextPageToken||''}while(pt);
+  const live=files.map(fl=>({fl,m:safeJSON(fl.description)})).filter(x=>!x.m.archived);
+  let added=0;
+  for(const {fl,m} of live){
+    const r=records.find(x=>x.driveId===fl.id);
+    if(r){
+      const busy=r.dirty||r.uploading||['reading','matching','converting','loading'].includes(r.state)||(document.activeElement&&r.el.contains(document.activeElement));
+      if(fl.modifiedTime!==r.remoteTime&&!busy){applyMeta(r,m);r.remoteTime=fl.modifiedTime;updateCard(r)}
+      continue;
+    }
+    if(!added)removeExample();
+    added++;
+    const nr={id:++seq,driveId:fl.id,remoteTime:fl.modifiedTime,name:fl.name,url:'',rot:0,f:{date:'',amount:'',case:'',purpose:''},touched:new Set(),hint:'',state:'queued'};
+    applyMeta(nr,m);const keep=nr.state;nr.state='loading';
+    records.push(nr);buildCard(nr);
+    gfetch(`${DRV}/${fl.id}?alt=media`).then(res=>res.blob()).then(async b=>{
+      nr.url=URL.createObjectURL(b);nr.el.querySelector('img').src=nr.url;await loadImg(nr);nr.state=keep;updateCard(nr);pump();
+    }).catch(()=>{nr.state='error';nr.err='照片下載失敗，請按「立即同步」再試。';updateCard(nr)});
+  }
+  // 在其他裝置移除或標記已請款的單據，這裡也拿掉
+  for(const r of [...records])if(r.driveId&&!live.some(x=>x.fl.id===r.driveId)){r.el.remove();records=records.filter(x=>x!==r)}
+  renumber();updateTotals();
+  return added;
+}
+async function gSyncAll(){
+  if(!gOk()||gBusy)return;
+  gBusy=true;gStatus('同步中…');
+  try{
+    await gLoadCalendar();
+    for(const r of records)if(!r.driveId&&!r.example&&r.url)await gUpload(r);
+    for(const r of records)if(r.dirty)gSave(r,0);
+    const n=await gPull();gLast=Date.now();
+    gStatus(`已同步（${new Date().toTimeString().slice(0,5)}）：行程 ${CAL?CAL.list.length.toLocaleString():0} 筆，未請款單據 ${records.filter(r=>r.driveId).length} 張${n?`，這次新增 ${n} 張`:''}。`);
+  }catch(e){if(e.message!=='auth')gStatus('同步失敗，請確認網路後按「立即同步」。',true)}
+  finally{gBusy=false}
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&gOk()&&Date.now()-gLast>30e3)gSyncAll()});
+// 還在登入有效期內就直接同步；Google 登入元件只在按登入按鈕時才需要
+gUI();
+if(gOk())gAfterLogin();
+else if(store.get('rb.gused',false))gStatus('登入已過期，請按「重新連線 Google」繼續同步。');
+(function waitGis(n){if(!gInit()&&n<80)setTimeout(()=>waitGis(n+1),250)})(0);
+$('#sAutoOcr').addEventListener('change',()=>pump());
+
+/* 全部重做、標記已請款：按兩下才執行，避免誤按 */
+function twoStep(btn,ask,fn){
+  let armed=false,t;
+  btn.addEventListener('click',()=>{
+    if(!armed){armed=true;btn.textContent=ask;t=setTimeout(()=>{armed=false;btn.textContent=btn.dataset.label},4000);return}
+    clearTimeout(t);armed=false;btn.textContent=btn.dataset.label;fn();
+  });
+}
+twoStep($('#redoAll'),'再按一次：全部重做',()=>{
+  const out=$('#outMsg');
+  if(!AI){out.textContent='文字辨識元件沒有載入，無法重新辨識。';return}
+  let n=0;
+  for(const r of records){
+    if(r.example||!r.url||['reading','matching','converting','loading'].includes(r.state))continue;
+    r.f={date:'',amount:'',case:'',purpose:''};r.touched.clear();r.ai=null;r.match=null;r.pick=null;r.err='';r.force=true;r.state='queued';updateCard(r);n++;
+  }
+  out.textContent=n?`${n} 張單據重新辨識中。`:'沒有可以重做的單據。';pump();
+});
+twoStep($('#archiveBtn'),'再按一次：標記已請款',()=>{
+  const list=records.filter(r=>!r.example);
+  if(!list.length){$('#outMsg').textContent='目前沒有單據。';return}
+  const day=todayISO();
+  for(const r of list){if(r.ctl)r.ctl.abort();r.archived=day;if(r.driveId)gSave(r,0);r.el.remove()}
+  records=records.filter(r=>r.example);renumber();updateTotals();
+  $('#outMsg').textContent=`已將 ${list.length} 張單據標記為已請款（${fmtDate(day,false)}）`+(gOk()?'，照片仍保留在雲端硬碟。':'。');
+});
 </script>
 </body>
 </html>
